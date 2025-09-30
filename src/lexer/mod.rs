@@ -2,12 +2,18 @@
 pub enum Token {
     KWLet,              // let
     KWFn,               // fn
-    KWReturn,           // return  
+    KWReturn,           // return
+    KWIf,               // if
     Identifier(String), // identifier (e.g. a)
     Number(i32),        // number literal
     String(String),     // string literal
     Operator(Operator), // operator (e.g. +)
     Equal,              // ==
+    NotEqual,           // !=
+    LessThan,           // <
+    LessThanOrEqual,    // <=
+    GreaterThan,        // >
+    GreaterThanOrEqual, // >=
     Assign,             // =
     BracketOpen,        // (
     BracketClose,       // )
@@ -61,6 +67,28 @@ pub fn tokenize(input: String) -> Vec<Token> {
                     tokens.push(Token::Assign);
                 }
             }
+            '!' => {
+                if let Some('=') = chars.peek() {
+                    chars.next();
+                    tokens.push(Token::NotEqual);
+                }
+            }
+            '<' => {
+                if let Some('=') = chars.peek() {
+                    chars.next();
+                    tokens.push(Token::LessThanOrEqual);
+                } else {
+                    tokens.push(Token::LessThan);
+                }
+            }
+            '>' => {
+                if let Some('=') = chars.peek() {
+                    chars.next();
+                    tokens.push(Token::GreaterThanOrEqual);
+                } else {
+                    tokens.push(Token::GreaterThan);
+                }
+            }
             '+' => tokens.push(Token::Operator(Operator::Add)),
             '-' => tokens.push(Token::Operator(Operator::Subtract)),
             '*' => tokens.push(Token::Operator(Operator::Multiply)),
@@ -103,6 +131,7 @@ pub fn tokenize(input: String) -> Vec<Token> {
                         "let" | "var" | "const" => Token::KWLet,
                         "fn" | "function" | "def" => Token::KWFn,
                         "return" => Token::KWReturn,
+                        "if" => Token::KWIf,
                         _ => Token::Identifier(identifier),
                     };
                     tokens.push(token);

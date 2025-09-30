@@ -23,6 +23,12 @@ pub enum BinaryOp {
     Subtract,
     Multiply,
     Divide,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +44,11 @@ pub enum Stmt {
     },
     Return(Expr),
     Print(Expr),
+    If {
+        condition: Expr,
+        then_branch: Vec<Stmt>,
+        else_branch: Option<Vec<Stmt>>,
+    },
     Expression(Expr),
 }
 
@@ -84,10 +95,18 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
                 .delimited_by(just(Token::BracketOpen), just(Token::BracketClose)),
         ));
 
-        // binary operations
+        // binary operation
         primary.clone()
             .foldl(
-                select! { Token::Operator(op) => BinaryOp::from(op) }
+                choice((
+                    select! { Token::Operator(op) => BinaryOp::from(op) },
+                    select! { Token::Equal => BinaryOp::Equal },
+                    select! { Token::NotEqual => BinaryOp::NotEqual },
+                    select! { Token::LessThan => BinaryOp::LessThan },
+                    select! { Token::LessThanOrEqual => BinaryOp::LessThanOrEqual },
+                    select! { Token::GreaterThan => BinaryOp::GreaterThan },
+                    select! { Token::GreaterThanOrEqual => BinaryOp::GreaterThanOrEqual },
+                ))
                     .then(primary.clone())
                     .repeated(),
                 |left, (op, right)| Expr::Binary {
@@ -135,6 +154,20 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
             )
             .map(|((name, params), body)| Stmt::Function { name, params, body });
 
+        let if_stmt = just(Token::KWIf)
+            .ignore_then(expr_parser.clone())
+            .then(
+                stmt.clone()
+                    .repeated()
+                    .collect()
+                    .delimited_by(just(Token::BraceOpen), just(Token::BraceClose))
+            )
+            .map(|(condition, then_branch)| Stmt::If {
+                condition,
+                then_branch,
+                else_branch: None,
+            });
+
         let expr_stmt = expr_parser.clone()
             .then_ignore(just(Token::Semicolon))
             .map(Stmt::Expression);
@@ -145,6 +178,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
             function_stmt,
             return_stmt, 
             print_stmt,
+            if_stmt,
             expr_stmt,
         ))
     })

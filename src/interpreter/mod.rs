@@ -93,6 +93,32 @@ impl Interpreter {
                 println!("{}", val);
                 Ok(Some(Value::Void))
             }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch: _,
+            } => {
+                let condition_value = self.evaluate_expression(condition)?;
+                let is_truthy = match condition_value {
+                    Value::Number(n) => n != 0,
+                    Value::String(s) => !s.is_empty(),
+                    Value::Void => false,
+                };
+
+                if is_truthy {
+                    for stmt in then_branch {
+                        match self.execute_statement(stmt)? {
+                            Some(value) => {
+                                if matches!(stmt, Stmt::Return(_)) {
+                                    return Ok(Some(value));
+                                }
+                            }
+                            None => continue,
+                        }
+                    }
+                }
+                Ok(Some(Value::Void))
+            }
             Stmt::Expression(expr) => {
                 let val = self.evaluate_expression(expr)?;
                 Ok(Some(val))
@@ -125,6 +151,48 @@ impl Interpreter {
                                 }
                                 l / r
                             }
+                            BinaryOp::Equal => {
+                                if l == r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            BinaryOp::NotEqual => {
+                                if l != r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            BinaryOp::LessThan => {
+                                if l < r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            BinaryOp::LessThanOrEqual => {
+                                if l <= r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            BinaryOp::GreaterThan => {
+                                if l > r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            BinaryOp::GreaterThanOrEqual => {
+                                if l >= r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
                         };
                         Ok(Value::Number(result))
                     }
@@ -152,13 +220,19 @@ impl Interpreter {
                         arg_values.push(self.evaluate_expression(arg)?);
                     }
 
+                    // new interpreter for the function call with fresh variables)
                     let mut func_interpreter = Interpreter::new();
+                    // Copy all functions to the new interpreter
                     func_interpreter.env.functions = self.env.functions.clone();
-                    
+
+                    // Set function parameters in the new interpreter
                     for (param, value) in params.iter().zip(arg_values.iter()) {
-                        func_interpreter.env.set_variable(param.clone(), value.clone());
+                        func_interpreter
+                            .env
+                            .set_variable(param.clone(), value.clone());
                     }
 
+                    // Execute the function body
                     for stmt in &body {
                         match func_interpreter.execute_statement(stmt)? {
                             Some(value) => {
