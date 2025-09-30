@@ -8,18 +8,25 @@ use parser::parse;
 fn main() {
     // Test the parser with some sample MouseLang code
     let code = r#"
-        fn simple_recursive(n) {
-            print("Called with:");
-            print(n);
-            if n <= 0 {
-                return 0;
-            }
-            return simple_recursive(n - 1);
+        fn add(a, b) {
+            return a + b;
         }
-        
-        let result = simple_recursive(2);
-        print("Result:");
-        print(result);
+
+        let result = add(5, 3);
+        print(result); // Should print 8
+
+        fn factorial(n) {
+            if n <= 1 {
+                return 1;
+            }
+            return n * factorial(n - 1);
+        }
+
+        let fact3 = factorial(3);
+        print("Factorial result:");
+        print(fact3);
+
+        print("Hello, MouseLang!");
     "#;
 
     println!("Input code:");

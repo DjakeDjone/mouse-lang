@@ -8,6 +8,12 @@ pub enum Value {
     Void,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ControlFlow {
+    None,
+    Return(Value),
+}
+
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -62,8 +68,8 @@ impl Interpreter {
     pub fn interpret(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             match self.execute_statement(stmt)? {
-                Some(Value::Void) | None => continue,
-                Some(_value) => {
+                ControlFlow::None => continue,
+                ControlFlow::Return(_value) => {
                     // TODO: handle (throw error?), for now it's ok
                     continue;
                 }
@@ -72,26 +78,26 @@ impl Interpreter {
         Ok(())
     }
 
-    fn execute_statement(&mut self, stmt: &Stmt) -> Result<Option<Value>, String> {
+    fn execute_statement(&mut self, stmt: &Stmt) -> Result<ControlFlow, String> {
         match stmt {
             Stmt::Let { name, value } => {
                 let val = self.evaluate_expression(value)?;
                 self.env.set_variable(name.clone(), val);
-                Ok(Some(Value::Void))
+                Ok(ControlFlow::None)
             }
             Stmt::Function { name, params, body } => {
                 self.env
                     .set_function(name.clone(), params.clone(), body.clone());
-                Ok(Some(Value::Void))
+                Ok(ControlFlow::None)
             }
             Stmt::Return(expr) => {
                 let val = self.evaluate_expression(expr)?;
-                Ok(Some(val))
+                Ok(ControlFlow::Return(val))
             }
             Stmt::Print(expr) => {
                 let val = self.evaluate_expression(expr)?;
                 println!("{}", val);
-                Ok(Some(Value::Void))
+                Ok(ControlFlow::None)
             }
             Stmt::If {
                 condition,
@@ -108,20 +114,18 @@ impl Interpreter {
                 if is_truthy {
                     for stmt in then_branch {
                         match self.execute_statement(stmt)? {
-                            Some(value) => {
-                                if matches!(stmt, Stmt::Return(_)) {
-                                    return Ok(Some(value));
-                                }
+                            ControlFlow::Return(value) => {
+                                return Ok(ControlFlow::Return(value));
                             }
-                            None => continue,
+                            ControlFlow::None => continue,
                         }
                     }
                 }
-                Ok(Some(Value::Void))
+                Ok(ControlFlow::None)
             }
             Stmt::Expression(expr) => {
-                let val = self.evaluate_expression(expr)?;
-                Ok(Some(val))
+                let _val = self.evaluate_expression(expr)?;
+                Ok(ControlFlow::None)
             }
         }
     }
@@ -235,12 +239,10 @@ impl Interpreter {
                     // Execute the function body
                     for stmt in &body {
                         match func_interpreter.execute_statement(stmt)? {
-                            Some(value) => {
-                                if matches!(stmt, Stmt::Return(_)) {
-                                    return Ok(value);
-                                }
+                            ControlFlow::Return(value) => {
+                                return Ok(value);
                             }
-                            None => continue,
+                            ControlFlow::None => continue,
                         }
                     }
 
