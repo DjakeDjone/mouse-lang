@@ -9,7 +9,7 @@ use parser::parse;
 #[tokio::main]
 async fn main() {
     // Socket server example
-    let code = r#"
+    let socket_sample_code = r#"
         # Socket Server Example for MouseLang
 
         fn onConnect(clientId) {
@@ -39,9 +39,17 @@ async fn main() {
         let i = 0;
         while i < 100000 {
             i = i + 1;
-            std.sleep(1000);
+            sleep(1000);
         }
     "#;
+
+    let str_sample_code = r#"
+        let encoded_list = "benjamin:1234567890";
+        let decoded_list = std.split_str(encoded_list, ":");
+        print(decoded_list);
+    "#;
+
+    let code = str_sample_code;
 
     println!("Input code:");
     println!("{}", code);

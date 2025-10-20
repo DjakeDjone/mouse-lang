@@ -6,6 +6,7 @@ pub enum Value {
     Number(i32),
     String(String),
     Void,
+    Array(Vec<Value>),
     Function(String, Vec<String>, Vec<Stmt>), // name, params, body
 }
 
@@ -21,6 +22,14 @@ impl std::fmt::Display for Value {
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
             Value::Void => write!(f, "()"),
+            Value::Array(arr) => write!(
+                f,
+                "[{}]",
+                arr.iter()
+                    .map(|v| format!("{}", v))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
             Value::Function(name, _, _) => write!(f, "<function {}>", name),
         }
     }
@@ -55,6 +64,10 @@ impl Environment {
         );
         self.native_functions
             .insert("std.sleep".to_string(), crate::std::sleep::sleep);
+        self.native_functions.insert(
+            "std.split_str".to_string(),
+            crate::std::str_utils::split_string,
+        );
     }
 
     pub fn get_variable(&self, name: &str) -> Option<&Value> {
@@ -142,6 +155,7 @@ impl Interpreter {
                     Value::Number(n) => n != 0,
                     Value::String(s) => !s.is_empty(),
                     Value::Void => false,
+                    Value::Array(arr) => !arr.is_empty(),
                     Value::Function(_, _, _) => true,
                 };
 
@@ -164,6 +178,7 @@ impl Interpreter {
                         Value::Number(n) => n != 0,
                         Value::String(s) => !s.is_empty(),
                         Value::Void => false,
+                        Value::Array(arr) => !arr.is_empty(),
                         Value::Function(_, _, _) => true,
                     };
 
