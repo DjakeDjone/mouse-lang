@@ -1,52 +1,46 @@
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
+pub mod std;
 
 use lexer::tokenize;
 use parser::parse;
 
-fn main() {
+#[tokio::main]
+async fn main() {
+    // Socket server example
     let code = r#"
-        fn add(a, b) {
-            return a + b;
+        # Socket Server Example for MouseLang
+
+        fn onConnect(clientId) {
+            print("Client connected:");
+            print(clientId);
         }
 
-        let result = add(5, 3);
-        print(result); // Should print 8
-
-        function factorial(n) {
-            if n <= 1 {
-                return 1;
-            }
-            return n * factorial(n - 1);
-        }
-
-        let fact3 = factorial(3);
-        print("Factorial result:");
-        print(fact3);
-
-        print("Hello, MouseLang!");
-
-        fn print_12_times(message, times) {
+        fn onMessage(clientId, message) {
+            print("Received message from:");
+            print(clientId);
+            print("Message:");
             print(message);
-            if times > 0 {
-                print_12_times(message, times - 1);
-            }
+            return "Echo: " + message;
         }
 
-        print_12_times("Hello, MouseLang!", 12);
+        fn onDisconnect(clientId) {
+            print("Client disconnected:");
+            print(clientId);
+        }
 
-        # loops
-        # print($i).for(0, 12)
-        # nested loops
-        # print($i + ":" + $i1).for(0, 12).for(0, 12)
+        print("Starting socket server...");
+        std.socketServer("127.0.0.1", 8080, onConnect, onMessage, onDisconnect);
+        print("Server is running on 127.0.0.1:8080");
+        print("Connect with: nc 127.0.0.1 8080 or telnet 127.0.0.1 8080");
 
+        # Keep the main thread alive for a bit to allow connections
         let i = 0;
-        while (i < 5) {
-            print(i);
+        while i < 100000 {
             i = i + 1;
+            std.sleep(1000);
         }
-
     "#;
 
     println!("Input code:");

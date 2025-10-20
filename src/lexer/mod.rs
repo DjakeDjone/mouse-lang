@@ -22,6 +22,7 @@ pub enum Token {
     BraceClose,         // }
     Comma,              // ,
     Semicolon,          // ;
+    Dot,                // .
     Comment(String),    // comment (e.g. // comment or # comment)
 }
 
@@ -42,6 +43,7 @@ pub fn tokenize(input: String) -> Vec<Token> {
             ' ' | '\t' | '\n' => {}
             ';' => tokens.push(Token::Semicolon),
             ',' => tokens.push(Token::Comma),
+            '.' => tokens.push(Token::Dot),
             '(' => tokens.push(Token::BracketOpen),
             ')' => tokens.push(Token::BracketClose),
             '{' => tokens.push(Token::BraceOpen),

@@ -15,6 +15,10 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    MemberAccess {
+        object: Box<Expr>,
+        member: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,24 +87,62 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
             select! { Token::Number(n) => Expr::Number(n) },
             // Strings
             select! { Token::String(s) => Expr::String(s) },
-            // Function calls
-            select! { Token::Identifier(name) => name }
-                .then(
-                    expr.clone()
-                        .separated_by(just(Token::Comma))
-                        .collect()
-                        .delimited_by(just(Token::BracketOpen), just(Token::BracketClose)),
-                )
-                .map(|(name, args)| Expr::FunctionCall { name, args }),
-            // Identifiers
+            // Identifiers (potentially with member access or function calls)
             select! { Token::Identifier(name) => Expr::Identifier(name) },
             // Parenthesized expressions
             expr.clone()
                 .delimited_by(just(Token::BracketOpen), just(Token::BracketClose)),
         ));
 
+        // Handle member access and function calls (left-to-right)
+        let member_or_call = primary.clone().foldl(
+            choice((
+                // Member access: obj.member
+                just(Token::Dot)
+                    .ignore_then(select! { Token::Identifier(member) => member })
+                    .map(|member| (false, member, vec![])),
+                // Function call: func(args)
+                expr.clone()
+                    .separated_by(just(Token::Comma))
+                    .collect()
+                    .delimited_by(just(Token::BracketOpen), just(Token::BracketClose))
+                    .map(|args| (true, String::new(), args)),
+            ))
+            .repeated(),
+            |left, (is_call, member, args)| {
+                if is_call {
+                    // This is a function call
+                    match left {
+                        Expr::Identifier(name) => Expr::FunctionCall { name, args },
+                        Expr::MemberAccess {
+                            object,
+                            member: method,
+                        } => {
+                            // For member function calls like std.socketServer()
+                            // Create a special identifier format
+                            let full_name = match *object {
+                                Expr::Identifier(obj_name) => format!("{}.{}", obj_name, method),
+                                _ => method,
+                            };
+                            Expr::FunctionCall {
+                                name: full_name,
+                                args,
+                            }
+                        }
+                        _ => left, // Error case, but we'll handle it
+                    }
+                } else {
+                    // This is member access
+                    Expr::MemberAccess {
+                        object: Box::new(left),
+                        member,
+                    }
+                }
+            },
+        );
+
         // binary operation
-        primary.clone().foldl(
+        member_or_call.clone().foldl(
             choice((
                 select! { Token::Operator(op) => BinaryOp::from(op) },
                 select! { Token::Equal => BinaryOp::Equal },
@@ -110,7 +152,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
                 select! { Token::GreaterThan => BinaryOp::GreaterThan },
                 select! { Token::GreaterThanOrEqual => BinaryOp::GreaterThanOrEqual },
             ))
-            .then(primary.clone())
+            .then(member_or_call.clone())
             .repeated(),
             |left, (op, right)| Expr::Binary {
                 left: Box::new(left),

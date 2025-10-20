@@ -6,6 +6,7 @@ pub enum Value {
     Number(i32),
     String(String),
     Void,
+    Function(String, Vec<String>, Vec<Stmt>), // name, params, body
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,21 +21,40 @@ impl std::fmt::Display for Value {
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
             Value::Void => write!(f, "()"),
+            Value::Function(name, _, _) => write!(f, "<function {}>", name),
         }
     }
 }
 
+pub type NativeFn = fn(&mut Interpreter, Vec<Value>) -> Result<Value, String>;
+
 pub struct Environment {
-    variables: HashMap<String, Value>,
-    functions: HashMap<String, (Vec<String>, Vec<Stmt>)>, // (params, body)
+    pub variables: HashMap<String, Value>,
+    pub functions: HashMap<String, (Vec<String>, Vec<Stmt>)>, // (params, body)
+    pub native_functions: HashMap<String, NativeFn>,
 }
 
 impl Environment {
     pub fn new() -> Self {
-        Environment {
+        let mut env = Environment {
             variables: HashMap::new(),
             functions: HashMap::new(),
-        }
+            native_functions: HashMap::new(),
+        };
+
+        // Register native functions
+        env.register_native_functions();
+
+        env
+    }
+
+    fn register_native_functions(&mut self) {
+        self.native_functions.insert(
+            "std.socketServer".to_string(),
+            crate::std::socket_server::socket_server,
+        );
+        self.native_functions
+            .insert("std.sleep".to_string(), crate::std::sleep::sleep);
     }
 
     pub fn get_variable(&self, name: &str) -> Option<&Value> {
@@ -52,10 +72,14 @@ impl Environment {
     pub fn set_function(&mut self, name: String, params: Vec<String>, body: Vec<Stmt>) {
         self.functions.insert(name, (params, body));
     }
+
+    pub fn get_native_function(&self, name: &str) -> Option<&NativeFn> {
+        self.native_functions.get(name)
+    }
 }
 
 pub struct Interpreter {
-    env: Environment,
+    pub env: Environment,
 }
 
 impl Interpreter {
@@ -78,7 +102,7 @@ impl Interpreter {
         Ok(())
     }
 
-    fn execute_statement(&mut self, stmt: &Stmt) -> Result<ControlFlow, String> {
+    pub fn execute_statement(&mut self, stmt: &Stmt) -> Result<ControlFlow, String> {
         match stmt {
             Stmt::Let { name, value } => {
                 let val = self.evaluate_expression(value)?;
@@ -118,6 +142,7 @@ impl Interpreter {
                     Value::Number(n) => n != 0,
                     Value::String(s) => !s.is_empty(),
                     Value::Void => false,
+                    Value::Function(_, _, _) => true,
                 };
 
                 if is_truthy {
@@ -139,6 +164,7 @@ impl Interpreter {
                         Value::Number(n) => n != 0,
                         Value::String(s) => !s.is_empty(),
                         Value::Void => false,
+                        Value::Function(_, _, _) => true,
                     };
 
                     if !is_truthy {
@@ -167,11 +193,17 @@ impl Interpreter {
         match expr {
             Expr::Number(n) => Ok(Value::Number(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
-            Expr::Identifier(name) => self
-                .env
-                .get_variable(name)
-                .cloned()
-                .ok_or_else(|| format!("Undefined variable: {}", name)),
+            Expr::Identifier(name) => {
+                // Check if it's a function that can be used as a value
+                if let Some((params, body)) = self.env.get_function(name).cloned() {
+                    Ok(Value::Function(name.clone(), params, body))
+                } else {
+                    self.env
+                        .get_variable(name)
+                        .cloned()
+                        .ok_or_else(|| format!("Undefined variable: {}", name))
+                }
+            }
             Expr::Binary { left, op, right } => {
                 let left_val = self.evaluate_expression(left)?;
                 let right_val = self.evaluate_expression(right)?;
@@ -241,26 +273,33 @@ impl Interpreter {
                 }
             }
             Expr::FunctionCall { name, args } => {
-                // clone to avoid borrowing issues
+                // Evaluate arguments first
+                let mut arg_values = Vec::new();
+                for arg in args {
+                    arg_values.push(self.evaluate_expression(arg)?);
+                }
+
+                // Check for native functions first
+                if let Some(native_fn) = self.env.get_native_function(name).cloned() {
+                    return native_fn(self, arg_values);
+                }
+
+                // Check for user-defined functions
                 if let Some((params, body)) = self.env.get_function(name).cloned() {
-                    if params.len() != args.len() {
+                    if params.len() != arg_values.len() {
                         return Err(format!(
                             "Function {} expects {} arguments, got {}",
                             name,
                             params.len(),
-                            args.len()
+                            arg_values.len()
                         ));
-                    }
-
-                    let mut arg_values = Vec::new();
-                    for arg in args {
-                        arg_values.push(self.evaluate_expression(arg)?);
                     }
 
                     // new interpreter for the function call with fresh variables)
                     let mut func_interpreter = Interpreter::new();
                     // Copy all functions to the new interpreter
                     func_interpreter.env.functions = self.env.functions.clone();
+                    func_interpreter.env.native_functions = self.env.native_functions.clone();
 
                     // Set function parameters in the new interpreter
                     for (param, value) in params.iter().zip(arg_values.iter()) {
@@ -284,6 +323,10 @@ impl Interpreter {
                     Err(format!("Undefined function: {}", name))
                 }
             }
+            Expr::MemberAccess {
+                object: _,
+                member: _,
+            } => Err("Member access should only appear in function call context".to_string()),
         }
     }
 }
