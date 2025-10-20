@@ -6,7 +6,6 @@ use lexer::tokenize;
 use parser::parse;
 
 fn main() {
-    // Test the parser with some sample MouseLang code
     let code = r#"
         fn add(a, b) {
             return a + b;
@@ -15,7 +14,7 @@ fn main() {
         let result = add(5, 3);
         print(result); // Should print 8
 
-        fn factorial(n) {
+        function factorial(n) {
             if n <= 1 {
                 return 1;
             }
@@ -27,6 +26,27 @@ fn main() {
         print(fact3);
 
         print("Hello, MouseLang!");
+
+        fn print_12_times(message, times) {
+            print(message);
+            if times > 0 {
+                print_12_times(message, times - 1);
+            }
+        }
+
+        print_12_times("Hello, MouseLang!", 12);
+
+        # loops
+        # print($i).for(0, 12)
+        # nested loops
+        # print($i + ":" + $i1).for(0, 12).for(0, 12)
+
+        let i = 0;
+        while (i < 5) {
+            print(i);
+            i = i + 1;
+        }
+
     "#;
 
     println!("Input code:");
@@ -53,5 +73,7 @@ fn main() {
 
     // println!("\nParsed AST:");
     println!("\nInterpreting:");
+    println!("-------------------------------------------------------------");
     interpreter::interpret(&parse_result);
+    println!("-------------------------------------------------------------");
 }

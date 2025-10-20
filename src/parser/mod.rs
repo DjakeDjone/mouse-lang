@@ -1,5 +1,5 @@
+use crate::lexer::{Operator, Token};
 use chumsky::prelude::*;
-use crate::lexer::{Token, Operator};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -37,6 +37,10 @@ pub enum Stmt {
         name: String,
         value: Expr,
     },
+    Assign {
+        name: String,
+        value: Expr,
+    },
     Function {
         name: String,
         params: Vec<String>,
@@ -48,6 +52,10 @@ pub enum Stmt {
         condition: Expr,
         then_branch: Vec<Stmt>,
         else_branch: Option<Vec<Stmt>>,
+    },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
     },
     Expression(Expr),
 }
@@ -73,48 +81,43 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
         let primary = choice((
             // Numbers
             select! { Token::Number(n) => Expr::Number(n) },
-            
             // Strings
             select! { Token::String(s) => Expr::String(s) },
-            
             // Function calls
             select! { Token::Identifier(name) => name }
                 .then(
                     expr.clone()
                         .separated_by(just(Token::Comma))
                         .collect()
-                        .delimited_by(just(Token::BracketOpen), just(Token::BracketClose))
+                        .delimited_by(just(Token::BracketOpen), just(Token::BracketClose)),
                 )
                 .map(|(name, args)| Expr::FunctionCall { name, args }),
-            
             // Identifiers
             select! { Token::Identifier(name) => Expr::Identifier(name) },
-            
             // Parenthesized expressions
             expr.clone()
                 .delimited_by(just(Token::BracketOpen), just(Token::BracketClose)),
         ));
 
         // binary operation
-        primary.clone()
-            .foldl(
-                choice((
-                    select! { Token::Operator(op) => BinaryOp::from(op) },
-                    select! { Token::Equal => BinaryOp::Equal },
-                    select! { Token::NotEqual => BinaryOp::NotEqual },
-                    select! { Token::LessThan => BinaryOp::LessThan },
-                    select! { Token::LessThanOrEqual => BinaryOp::LessThanOrEqual },
-                    select! { Token::GreaterThan => BinaryOp::GreaterThan },
-                    select! { Token::GreaterThanOrEqual => BinaryOp::GreaterThanOrEqual },
-                ))
-                    .then(primary.clone())
-                    .repeated(),
-                |left, (op, right)| Expr::Binary {
-                    left: Box::new(left),
-                    op,
-                    right: Box::new(right),
-                }
-            )
+        primary.clone().foldl(
+            choice((
+                select! { Token::Operator(op) => BinaryOp::from(op) },
+                select! { Token::Equal => BinaryOp::Equal },
+                select! { Token::NotEqual => BinaryOp::NotEqual },
+                select! { Token::LessThan => BinaryOp::LessThan },
+                select! { Token::LessThanOrEqual => BinaryOp::LessThanOrEqual },
+                select! { Token::GreaterThan => BinaryOp::GreaterThan },
+                select! { Token::GreaterThanOrEqual => BinaryOp::GreaterThanOrEqual },
+            ))
+            .then(primary.clone())
+            .repeated(),
+            |left, (op, right)| Expr::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            },
+        )
     });
 
     // Statement parsers - use recursive to handle function bodies
@@ -125,6 +128,12 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
             .then(expr_parser.clone())
             .then_ignore(just(Token::Semicolon))
             .map(|(name, value)| Stmt::Let { name, value });
+
+        let assign_stmt = select! { Token::Identifier(name) => name }
+            .then_ignore(just(Token::Assign))
+            .then(expr_parser.clone())
+            .then_ignore(just(Token::Semicolon))
+            .map(|(name, value)| Stmt::Assign { name, value });
 
         let return_stmt = just(Token::KWReturn)
             .ignore_then(expr_parser.clone())
@@ -144,13 +153,13 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
                 select! { Token::Identifier(param) => param }
                     .separated_by(just(Token::Comma))
                     .collect()
-                    .delimited_by(just(Token::BracketOpen), just(Token::BracketClose))
+                    .delimited_by(just(Token::BracketOpen), just(Token::BracketClose)),
             )
             .then(
                 stmt.clone()
                     .repeated()
                     .collect()
-                    .delimited_by(just(Token::BraceOpen), just(Token::BraceClose))
+                    .delimited_by(just(Token::BraceOpen), just(Token::BraceClose)),
             )
             .map(|((name, params), body)| Stmt::Function { name, params, body });
 
@@ -160,7 +169,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
                 stmt.clone()
                     .repeated()
                     .collect()
-                    .delimited_by(just(Token::BraceOpen), just(Token::BraceClose))
+                    .delimited_by(just(Token::BraceOpen), just(Token::BraceClose)),
             )
             .map(|(condition, then_branch)| Stmt::If {
                 condition,
@@ -168,17 +177,30 @@ pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Ri
                 else_branch: None,
             });
 
-        let expr_stmt = expr_parser.clone()
+        let while_stmt = just(Token::KWWhile)
+            .ignore_then(expr_parser.clone())
+            .then(
+                stmt.clone()
+                    .repeated()
+                    .collect()
+                    .delimited_by(just(Token::BraceOpen), just(Token::BraceClose)),
+            )
+            .map(|(condition, body)| Stmt::While { condition, body });
+
+        let expr_stmt = expr_parser
+            .clone()
             .then_ignore(just(Token::Semicolon))
             .map(Stmt::Expression);
 
         // Main statement parser
         choice((
             let_stmt,
+            assign_stmt,
             function_stmt,
-            return_stmt, 
+            return_stmt,
             print_stmt,
             if_stmt,
+            while_stmt,
             expr_stmt,
         ))
     })

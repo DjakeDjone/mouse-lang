@@ -85,6 +85,15 @@ impl Interpreter {
                 self.env.set_variable(name.clone(), val);
                 Ok(ControlFlow::None)
             }
+            Stmt::Assign { name, value } => {
+                // Check if variable exists
+                if self.env.get_variable(name).is_none() {
+                    return Err(format!("Cannot assign to undefined variable: {}", name));
+                }
+                let val = self.evaluate_expression(value)?;
+                self.env.set_variable(name.clone(), val);
+                Ok(ControlFlow::None)
+            }
             Stmt::Function { name, params, body } => {
                 self.env
                     .set_function(name.clone(), params.clone(), body.clone());
@@ -113,6 +122,30 @@ impl Interpreter {
 
                 if is_truthy {
                     for stmt in then_branch {
+                        match self.execute_statement(stmt)? {
+                            ControlFlow::Return(value) => {
+                                return Ok(ControlFlow::Return(value));
+                            }
+                            ControlFlow::None => continue,
+                        }
+                    }
+                }
+                Ok(ControlFlow::None)
+            }
+            Stmt::While { condition, body } => {
+                loop {
+                    let condition_value = self.evaluate_expression(condition)?;
+                    let is_truthy = match condition_value {
+                        Value::Number(n) => n != 0,
+                        Value::String(s) => !s.is_empty(),
+                        Value::Void => false,
+                    };
+
+                    if !is_truthy {
+                        break;
+                    }
+
+                    for stmt in body {
                         match self.execute_statement(stmt)? {
                             ControlFlow::Return(value) => {
                                 return Ok(ControlFlow::Return(value));

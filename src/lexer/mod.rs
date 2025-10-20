@@ -4,6 +4,7 @@ pub enum Token {
     KWFn,               // fn
     KWReturn,           // return
     KWIf,               // if
+    KWWhile,            // while
     Identifier(String), // identifier (e.g. a)
     Number(i32),        // number literal
     String(String),     // string literal
@@ -21,7 +22,7 @@ pub enum Token {
     BraceClose,         // }
     Comma,              // ,
     Semicolon,          // ;
-    Comment(String),    // comment (e.g. // comment)
+    Comment(String),    // comment (e.g. // comment or # comment)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -57,6 +58,16 @@ pub fn tokenize(input: String) -> Vec<Token> {
                     }
                 } else {
                     tokens.push(Token::Operator(Operator::Divide));
+                }
+            }
+            '#' => {
+                chars.next();
+                // Skip comment until end of line
+                while let Some(&c) = chars.peek() {
+                    chars.next();
+                    if c == '\n' {
+                        break;
+                    }
                 }
             }
             '=' => {
@@ -132,6 +143,7 @@ pub fn tokenize(input: String) -> Vec<Token> {
                         "fn" | "function" | "def" => Token::KWFn,
                         "return" => Token::KWReturn,
                         "if" => Token::KWIf,
+                        "while" => Token::KWWhile,
                         _ => Token::Identifier(identifier),
                     };
                     tokens.push(token);
