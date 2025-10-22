@@ -1,0 +1,3 @@
+let encoded_list = "benjamin:1234567890";
+let decoded_list = std.split_str(encoded_list, ":");
+print(decoded_list);

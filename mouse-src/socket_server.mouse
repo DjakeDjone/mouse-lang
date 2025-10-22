@@ -1,0 +1,36 @@
+# Socket Server Example for MouseLang
+
+fn onConnect(clientId) {
+    print("Client connected:");
+    print(clientId);
+}
+
+var global_var = "hallo";
+
+fn onMessage(clientId, message) {
+    print("Received message from:");
+    print(clientId);
+    print("Message:");
+    print(message);
+    global_var = global_var + "1";
+    print(global_var);
+    return "Echo: " + message;
+}
+
+fn onDisconnect(clientId) {
+    print("Client disconnected:");
+    print(clientId);
+}
+
+print("Starting socket server...");
+
+std.socketServer("127.0.0.1", 8080, onConnect, onMessage, onDisconnect);
+
+print("Server is running on 127.0.0.1:8080");
+
+# Keep the main thread alive for a bit to allow connections
+let i = 0;
+while i < 100000 {
+    i = i + 1;
+    std.sleep(1000);
+}

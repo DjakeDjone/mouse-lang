@@ -1,0 +1,16 @@
+print("Hello, World!");
+
+var x = 5;
+let y = 10;
+let z = x + y;
+print(z);
+
+var name = "Valentin";
+
+var i = 0;
+var len = 1000000;
+while (i < len) {
+    i = i + 1;
+}
+
+print("Hello " + name);

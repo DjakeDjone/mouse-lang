@@ -1,4 +1,7 @@
-use crate::parser::{BinaryOp, Expr, Program, Stmt};
+use crate::{
+    parser::{BinaryOp, Expr, Program, Stmt},
+    std_lib,
+};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,13 +63,13 @@ impl Environment {
     fn register_native_functions(&mut self) {
         self.native_functions.insert(
             "std.socketServer".to_string(),
-            crate::std::socket_server::socket_server,
+            std_lib::socket_server::socket_server,
         );
         self.native_functions
-            .insert("std.sleep".to_string(), crate::std::sleep::sleep);
+            .insert("std.sleep".to_string(), std_lib::sleep::sleep);
         self.native_functions.insert(
             "std.split_str".to_string(),
-            crate::std::str_utils::split_string,
+            std_lib::str_utils::split_string,
         );
     }
 
