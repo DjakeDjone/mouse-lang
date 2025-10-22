@@ -156,3 +156,33 @@ pub fn tokenize(input: String) -> Vec<Token> {
 
     tokens
 }
+
+
+/// fixes issues like missing semicolons at the end of lines
+pub fn autofix(input: &str) -> String {
+    let mut output = String::new();
+    let mut lines = input.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim_end();
+        println!("Autofix processing line: '{}'", line);
+
+        if !trimmed.is_empty()
+            && !trimmed.ends_with(';')
+            && !trimmed.ends_with('{')
+            && !trimmed.ends_with('}')
+            && !trimmed.ends_with(',')
+            && !trimmed.ends_with('(')
+        {
+            output.push_str(trimmed);
+            output.push_str(";\n");
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+
+    println!("Autofix output:\n{}", output);
+
+    output
+}
