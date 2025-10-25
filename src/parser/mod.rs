@@ -1,6 +1,7 @@
-use crate::lexer::{Operator, Token};
-use chumsky::prelude::*;
-
+use crate::{
+    errors::Error,
+    lexer::{Operator, Token, TokenType},
+};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Identifier(String),
@@ -51,7 +52,7 @@ pub enum Stmt {
         body: Vec<Stmt>,
     },
     Return(Expr),
-    Print(Expr),
+    // Print(Expr),
     If {
         condition: Expr,
         then_branch: Vec<Stmt>,
@@ -61,7 +62,7 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
-    Expression(Expr),
+    Expression(Expr), // e.g. let x = 5;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,8 +70,8 @@ pub struct Program {
     pub statements: Vec<Stmt>,
 }
 
-impl From<Operator> for BinaryOp {
-    fn from(op: Operator) -> Self {
+impl From<&Operator> for BinaryOp {
+    fn from(op: &Operator) -> Self {
         match op {
             Operator::Add => BinaryOp::Add,
             Operator::Subtract => BinaryOp::Subtract,
@@ -80,179 +81,149 @@ impl From<Operator> for BinaryOp {
     }
 }
 
-pub fn parser<'src>() -> impl Parser<'src, &'src [Token], Program, extra::Err<Rich<'src, Token>>> {
-    let expr_parser = recursive(|expr| {
-        let primary = choice((
-            // Numbers
-            select! { Token::Number(n) => Expr::Number(n) },
-            // Strings
-            select! { Token::String(s) => Expr::String(s) },
-            // Identifiers (potentially with member access or function calls)
-            select! { Token::Identifier(name) => Expr::Identifier(name) },
-            // Parenthesized expressions
-            expr.clone()
-                .delimited_by(just(Token::BracketOpen), just(Token::BracketClose)),
-        ));
-
-        // Handle member access and function calls (left-to-right)
-        let member_or_call = primary.clone().foldl(
-            choice((
-                // Member access: obj.member
-                just(Token::Dot)
-                    .ignore_then(select! { Token::Identifier(member) => member })
-                    .map(|member| (false, member, vec![])),
-                // Function call: func(args)
-                expr.clone()
-                    .separated_by(just(Token::Comma))
-                    .collect()
-                    .delimited_by(just(Token::BracketOpen), just(Token::BracketClose))
-                    .map(|args| (true, String::new(), args)),
-            ))
-            .repeated(),
-            |left, (is_call, member, args)| {
-                if is_call {
-                    // This is a function call
-                    match left {
-                        Expr::Identifier(name) => Expr::FunctionCall { name, args },
-                        Expr::MemberAccess {
-                            object,
-                            member: method,
-                        } => {
-                            // For member function calls like std.socketServer()
-                            // Create a special identifier format
-                            let full_name = match *object {
-                                Expr::Identifier(obj_name) => format!("{}.{}", obj_name, method),
-                                _ => method,
-                            };
-                            Expr::FunctionCall {
-                                name: full_name,
-                                args,
-                            }
-                        }
-                        _ => left, // Error case, but we'll handle it
-                    }
-                } else {
-                    // This is member access
-                    Expr::MemberAccess {
-                        object: Box::new(left),
-                        member,
-                    }
-                }
-            },
-        );
-
-        // binary operation
-        member_or_call.clone().foldl(
-            choice((
-                select! { Token::Operator(op) => BinaryOp::from(op) },
-                select! { Token::Equal => BinaryOp::Equal },
-                select! { Token::NotEqual => BinaryOp::NotEqual },
-                select! { Token::LessThan => BinaryOp::LessThan },
-                select! { Token::LessThanOrEqual => BinaryOp::LessThanOrEqual },
-                select! { Token::GreaterThan => BinaryOp::GreaterThan },
-                select! { Token::GreaterThanOrEqual => BinaryOp::GreaterThanOrEqual },
-            ))
-            .then(member_or_call.clone())
-            .repeated(),
-            |left, (op, right)| Expr::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            },
-        )
-    });
-
-    // Statement parsers - use recursive to handle function bodies
-    recursive(|stmt| {
-        let let_stmt = just(Token::KWLet)
-            .ignore_then(select! { Token::Identifier(name) => name })
-            .then_ignore(just(Token::Assign))
-            .then(expr_parser.clone())
-            .then_ignore(just(Token::Semicolon))
-            .map(|(name, value)| Stmt::Let { name, value });
-
-        let assign_stmt = select! { Token::Identifier(name) => name }
-            .then_ignore(just(Token::Assign))
-            .then(expr_parser.clone())
-            .then_ignore(just(Token::Semicolon))
-            .map(|(name, value)| Stmt::Assign { name, value });
-
-        let return_stmt = just(Token::KWReturn)
-            .ignore_then(expr_parser.clone())
-            .then_ignore(just(Token::Semicolon))
-            .map(Stmt::Return);
-
-        let print_stmt = select! { Token::Identifier(s) if s == "print" => s }
-            .ignore_then(just(Token::BracketOpen))
-            .ignore_then(expr_parser.clone())
-            .then_ignore(just(Token::BracketClose))
-            .then_ignore(just(Token::Semicolon))
-            .map(Stmt::Print);
-
-        let function_stmt = just(Token::KWFn)
-            .ignore_then(select! { Token::Identifier(name) => name })
-            .then(
-                select! { Token::Identifier(param) => param }
-                    .separated_by(just(Token::Comma))
-                    .collect()
-                    .delimited_by(just(Token::BracketOpen), just(Token::BracketClose)),
-            )
-            .then(
-                stmt.clone()
-                    .repeated()
-                    .collect()
-                    .delimited_by(just(Token::BraceOpen), just(Token::BraceClose)),
-            )
-            .map(|((name, params), body)| Stmt::Function { name, params, body });
-
-        let if_stmt = just(Token::KWIf)
-            .ignore_then(expr_parser.clone())
-            .then(
-                stmt.clone()
-                    .repeated()
-                    .collect()
-                    .delimited_by(just(Token::BraceOpen), just(Token::BraceClose)),
-            )
-            .map(|(condition, then_branch)| Stmt::If {
-                condition,
-                then_branch,
-                else_branch: None,
-            });
-
-        let while_stmt = just(Token::KWWhile)
-            .ignore_then(expr_parser.clone())
-            .then(
-                stmt.clone()
-                    .repeated()
-                    .collect()
-                    .delimited_by(just(Token::BraceOpen), just(Token::BraceClose)),
-            )
-            .map(|(condition, body)| Stmt::While { condition, body });
-
-        let expr_stmt = expr_parser
-            .clone()
-            .then_ignore(just(Token::Semicolon))
-            .map(Stmt::Expression);
-
-        // Main statement parser
-        choice((
-            let_stmt,
-            assign_stmt,
-            function_stmt,
-            return_stmt,
-            print_stmt,
-            if_stmt,
-            while_stmt,
-            expr_stmt,
-        ))
-    })
-    // Program parser
-    .repeated()
-    .collect()
-    .then_ignore(end())
-    .map(|statements| Program { statements })
+fn parse_params(tokens: &[Token], idx: usize) -> Result<(Vec<Expr>, u8), Error> {
+    let mut params = Vec::new();
+    let mut idx2 = idx;
+    loop {
+        let token = tokens.get(idx2).ok_or(Error::unexpected_eof())?;
+        match &token.token {
+            TokenType::Identifier(ident) => {
+                params.push(Expr::Identifier(ident.to_owned()));
+                idx2 += 1;
+            }
+            TokenType::Comma => {
+                idx2 += 1;
+            }
+            TokenType::BracketClose => {
+                return Ok((params, (idx2 - idx) as u8));
+            }
+            _ => return Err(Error::syntax_error(token, "identifier or closing bracket")),
+        }
+    }
 }
 
-pub fn parse(tokens: &[Token]) -> Result<Program, Vec<Rich<'_, Token>>> {
-    parser().parse(tokens).into_result()
+fn parse_identifier(tokens: &[Token], name: String, idx: usize) -> Result<(Stmt, u8), Error> {
+    println!("parse identifier");
+    let token = tokens.get(idx + 1).ok_or(Error::unexpected_eof())?;
+    match token.token {
+        TokenType::Assign => {
+            let value = parse_expr(tokens, idx + 2)?;
+            Ok((
+                Stmt::Assign {
+                    name,
+                    value: value.0,
+                },
+                2 + value.1,
+            ))
+        }
+        TokenType::BracketOpen => {
+            // parse expression
+            let expr = parse_expr(tokens, idx)?;
+            Ok((Stmt::Expression(expr.0), expr.1))
+        }
+        _ => Err(Error::syntax_error(token, "assignment operator")),
+    }
+}
+
+fn parse_primitive(tokens: &[Token], idx: usize) -> Result<Expr, Error> {
+    let token = tokens.get(idx).ok_or(Error::unexpected_eof())?;
+    match token.token.to_owned() {
+        TokenType::Number(num) => Ok(Expr::Number(num)),
+        TokenType::String(str) => Ok(Expr::String(str)),
+        TokenType::Identifier(ident) => Ok(Expr::Identifier(ident)), // TODO: function calls
+        _ => Err(Error::syntax_error(token, "number or string literal")),
+    }
+}
+
+/// expression
+/// can be a number, string, function call, binary operation
+/// returns the parsed expression and the number of tokens consumed
+fn parse_expr(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
+    let token = tokens.get(idx).ok_or(Error::unexpected_eof())?;
+    let next_token_option = tokens.get(idx + 1);
+
+    if let Some(next_token) = next_token_option {
+        // check for binary operator
+        if let TokenType::Operator(op) = &next_token.token {
+            let right = parse_expr(tokens, idx + 2)?;
+            return Ok((
+                Expr::Binary {
+                    left: Box::new(parse_primitive(tokens, idx)?),
+                    op: BinaryOp::from(op),
+                    right: Box::new(right.0),
+                },
+                2 + right.1,
+            ));
+        }
+
+        // function call
+        if let TokenType::BracketOpen = &next_token.token {
+            let args = parse_params(tokens, idx + 2)?;
+            let name: String = token.clone().token.into();
+            return Ok((Expr::FunctionCall { name, args: args.0 }, 2 + args.1));
+        }
+    }
+
+    // check for number or string literal
+    Ok((parse_primitive(tokens, idx)?, 1))
+}
+
+fn parse_let(tokens: &[Token], current_token: &Token, idx: usize) -> Result<(Stmt, u8), Error> {
+    let name_token = tokens
+        .get(idx + 1)
+        .ok_or(Error::syntax_error(current_token, "identifier"))?;
+    let name = match &name_token.token {
+        TokenType::Identifier(name) => name,
+        _ => return Err(Error::syntax_error(name_token, "identifier")),
+    };
+
+    // expect equal sign
+    let equal_token = tokens
+        .get(idx + 2)
+        .ok_or(Error::syntax_error(current_token, "="))?;
+    if equal_token.token != TokenType::Assign {
+        return Err(Error::syntax_error(equal_token, "="));
+    }
+
+    // value can be a value or an expression
+    let value = parse_expr(tokens, idx + 3)?;
+
+    let let_stmt = Stmt::Let {
+        name: name.to_owned(),
+        value: value.0,
+    };
+    Ok((let_stmt, value.1 + 2))
+}
+
+pub fn parse(tokens: &[Token]) -> Result<Program, Error> {
+    let mut program = Program {
+        statements: Vec::new(),
+    };
+
+    let mut idx = 0;
+
+    while idx < tokens.len() {
+        let current_token = tokens.get(idx);
+        if let Some(token) = current_token {
+            println!("{:?}", token);
+
+            // tokens to ignore
+            if token.token == TokenType::Semicolon {
+                idx += 1;
+                continue;
+            }
+
+            let stmt = match &token.token {
+                TokenType::KWLet => parse_let(tokens, token, idx),
+                TokenType::Identifier(name) => parse_identifier(tokens, name.to_owned(), idx),
+                _ => Err(Error::unimplemented_token(token)),
+            }?;
+            program.statements.push(stmt.0);
+            idx += stmt.1 as usize;
+        }
+
+        idx += 1;
+    }
+
+    Ok(program)
 }

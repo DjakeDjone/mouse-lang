@@ -1,3 +1,4 @@
+pub mod errors;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;
@@ -60,16 +61,17 @@ async fn main() {
     // Tokenize
     let tokens = tokenize(code.to_string());
     debug_print(&debug, "\nTokens:");
+    let tokens_as_tokentype: Vec<_> = tokens.iter().map(|token| token.token.to_owned()).collect();
 
-    let parse_result = parse(&tokens)
-        .map_err(|e| {
-            eprintln!("\nParse error:");
-            for err in &e {
-                eprintln!("  {:?}", err);
-            }
-            e
-        })
-        .unwrap();
+    // debug
+    if debug {
+        println!("Tokens:");
+        for token in &tokens {
+            println!("-> {:?}", token);
+        }
+    }
+
+    let parse_result = parse(&tokens).unwrap();
     debug_print(&debug, "\nParsed successfully.");
     debug_print(&debug, format!("AST: {:#?}", parse_result).as_str());
 

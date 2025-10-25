@@ -61,6 +61,9 @@ impl Environment {
     }
 
     fn register_native_functions(&mut self) {
+        // print
+        self.native_functions
+            .insert("print".to_string(), std_lib::print::print);
         self.native_functions.insert(
             "std.socketServer".to_string(),
             std_lib::socket_server::socket_server,
@@ -143,11 +146,11 @@ impl Interpreter {
                 let val = self.evaluate_expression(expr)?;
                 Ok(ControlFlow::Return(val))
             }
-            Stmt::Print(expr) => {
-                let val = self.evaluate_expression(expr)?;
-                println!("{}", val);
-                Ok(ControlFlow::None)
-            }
+            // Stmt::Print(expr) => {
+            //     let val = self.evaluate_expression(expr)?;
+            //     println!("{}", val);
+            //     Ok(ControlFlow::None)
+            // }
             Stmt::If {
                 condition,
                 then_branch,
