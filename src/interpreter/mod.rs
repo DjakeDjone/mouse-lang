@@ -290,6 +290,11 @@ impl Interpreter {
                         BinaryOp::Add => Ok(Value::String(format!("{}{}", l, r))),
                         _ => Err(format!("Unsupported operation {:?} for strings", op)),
                     },
+                    // everything can be added to string
+                    (Value::String(l), r) => match op {
+                        BinaryOp::Add => Ok(Value::String(format!("{}{}", l, r))),
+                        _ => Err(format!("Unsupported operation {:?} for strings", op)),
+                    },
                     _ => Err("Type mismatch in binary operation".to_string()),
                 }
             }

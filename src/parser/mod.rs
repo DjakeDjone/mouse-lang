@@ -208,11 +208,13 @@ fn parse_primitive(tokens: &[Token], idx: usize) -> Result<Expr, Error> {
 /// expression
 /// can be a number, string, function call, binary operation
 /// returns the parsed expression and the number of tokens consumed
+/// expression until the next token is not a binary operator
 fn parse_expr(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
     let token = tokens.get(idx).ok_or(Error::unexpected_eof("parse_expr"))?;
     let next_token_option = tokens.get(idx + 1);
 
     if let Some(next_token) = next_token_option {
+        println!("Parse expr: Next token: {:?}", next_token);
         // check for binary operator
         if let TokenType::Operator(op) = &next_token.token {
             let right = parse_expr(tokens, idx + 2)?;
@@ -230,7 +232,7 @@ fn parse_expr(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
         if let TokenType::BracketOpen = &next_token.token {
             let args = parse_fn_call_params(tokens, idx + 2)?;
             let name: String = token.clone().token.into();
-            return Ok((Expr::FunctionCall { name, args: args.0 }, 2 + args.1));
+            return Ok((Expr::FunctionCall { name, args: args.0 }, 3 + args.1));
         }
     }
 
@@ -283,17 +285,28 @@ pub fn parse_block(tokens: &[Token], mut idx: usize) -> Result<(Vec<Stmt>, u8), 
                 continue;
             }
 
+            // end of block
+            if token.token == TokenType::BraceClose {
+                return Ok((body, 3 + (idx - initial_idx) as u8));
+            }
+
             let stmt = match &token.token {
                 TokenType::KWLet => parse_let(tokens, token, idx),
                 TokenType::Identifier(name) => parse_identifier(tokens, name.to_owned(), idx),
                 TokenType::KWFn => parse_fn(tokens, idx),
-                TokenType::BraceClose => {
-                    return Ok((body, 3 + (idx - initial_idx) as u8));
+                TokenType::KWReturn => {
+                    let value = parse_expr(tokens, idx + 1)?;
+
+                    let return_stmt = Stmt::Return(value.0);
+                    Ok((return_stmt, value.1 + 2))
                 }
                 _ => Err(Error::unimplemented_token(token, "parse_block")),
             }?;
             body.push(stmt.0);
             println!("idx: {} + {}", idx, stmt.1);
+            if token.token == TokenType::KWReturn {
+                return Ok((body, stmt.1 + 3));
+            }
             idx += stmt.1 as usize;
         }
 
