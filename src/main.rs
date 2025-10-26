@@ -3,6 +3,7 @@ pub mod interpreter;
 pub mod lexer;
 pub mod parser;
 pub mod std_lib;
+pub mod tests;
 
 use clap::Parser;
 use lexer::tokenize;

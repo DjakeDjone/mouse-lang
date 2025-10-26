@@ -9,7 +9,7 @@ var name = "Valentin";
 
 var i = 0;
 var len = 1000000;
-while (i < len) {
+while i < len {
     i = i + 1;
 }
 

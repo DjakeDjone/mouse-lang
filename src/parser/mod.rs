@@ -344,6 +344,27 @@ fn parse_let(tokens: &[Token], current_token: &Token, idx: usize) -> Result<(Stm
     Ok((let_stmt, value.1 + 3))
 }
 
+fn parse_while(tokens: &[Token], idx: usize) -> Result<(Stmt, u8), Error> {
+    let condition = parse_expr(tokens, idx + 1)?;
+    println!("condition: {:?}", condition);
+    // expect {
+    let open_brace_token = tokens
+        .get(idx + condition.1 as usize + 1)
+        .ok_or(Error::unexpected_eof("parse_while"))?;
+    if open_brace_token.token != TokenType::BraceOpen {
+        return Err(Error::syntax_error(open_brace_token, "{", "parse_while"));
+    }
+
+    // then
+    let then_branch = parse_block(tokens, idx + condition.1 as usize + 2)?;
+
+    let while_stmt = Stmt::While {
+        condition: condition.0,
+        body: then_branch.0,
+    };
+    Ok((while_stmt, 2 + condition.1 + then_branch.1))
+}
+
 fn parse_if(tokens: &[Token], idx: usize) -> Result<(Stmt, u8), Error> {
     let condition = parse_expr(tokens, idx + 1)?;
     println!("condition: {:?}", condition);
@@ -391,6 +412,7 @@ pub fn parse_block(tokens: &[Token], mut idx: usize) -> Result<(Vec<Stmt>, u8), 
                 TokenType::Identifier(name) => parse_identifier(tokens, name.to_owned(), idx),
                 TokenType::KWFn => parse_fn(tokens, idx),
                 TokenType::KWIf => parse_if(tokens, idx),
+                TokenType::KWWhile => parse_while(tokens, idx),
                 TokenType::KWReturn => {
                     let value = parse_expr(tokens, idx + 1)?;
 

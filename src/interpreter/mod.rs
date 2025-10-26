@@ -11,6 +11,7 @@ pub enum Value {
     Void,
     Array(Vec<Value>),
     Function(String, Vec<String>, Vec<Stmt>), // name, params, body
+    Object(HashMap<String, Value>),           // properties
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +35,15 @@ impl std::fmt::Display for Value {
                     .join(", ")
             ),
             Value::Function(name, _, _) => write!(f, "<function {}>", name),
+            Value::Object(props) => write!(
+                f,
+                "{{{}}}",
+                props
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
         }
     }
 }
@@ -163,6 +173,7 @@ impl Interpreter {
                     Value::Void => false,
                     Value::Array(arr) => !arr.is_empty(),
                     Value::Function(_, _, _) => true,
+                    Value::Object(props) => !props.is_empty(),
                 };
 
                 if is_truthy {
@@ -186,6 +197,7 @@ impl Interpreter {
                         Value::Void => false,
                         Value::Array(arr) => !arr.is_empty(),
                         Value::Function(_, _, _) => true,
+                        Value::Object(props) => !props.is_empty(),
                     };
 
                     if !is_truthy {
@@ -328,10 +340,6 @@ impl Interpreter {
 
                     // Set function parameters in the new interpreter
                     for (param, value) in params.iter().zip(arg_values.iter()) {
-                        // if the param is a function call, execute
-                        if let Value::Function(func_name, func_params, func_body) = value {
-                            println!("Executing function call: {}", func_name);
-                        }
                         func_interpreter
                             .env
                             .set_variable(param.clone(), value.clone());
