@@ -299,7 +299,6 @@ impl Interpreter {
                 }
             }
             Expr::FunctionCall { name, args } => {
-                // Evaluate arguments first
                 let mut arg_values = Vec::new();
                 for arg in args {
                     arg_values.push(self.evaluate_expression(arg)?);
@@ -329,6 +328,10 @@ impl Interpreter {
 
                     // Set function parameters in the new interpreter
                     for (param, value) in params.iter().zip(arg_values.iter()) {
+                        // if the param is a function call, execute
+                        if let Value::Function(func_name, func_params, func_body) = value {
+                            println!("Executing function call: {}", func_name);
+                        }
                         func_interpreter
                             .env
                             .set_variable(param.clone(), value.clone());

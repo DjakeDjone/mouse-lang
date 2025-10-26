@@ -1,6 +1,6 @@
 use crate::{
     errors::Error,
-    lexer::{Operator, Token, TokenType},
+    lexer::{Comparison, Operator, Token, TokenType},
 };
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -81,6 +81,19 @@ impl From<&Operator> for BinaryOp {
     }
 }
 
+impl From<&Comparison> for BinaryOp {
+    fn from(op: &Comparison) -> Self {
+        match op {
+            Comparison::Equal => BinaryOp::Equal,
+            Comparison::NotEqual => BinaryOp::NotEqual,
+            Comparison::LessThan => BinaryOp::LessThan,
+            Comparison::LessThanOrEqual => BinaryOp::LessThanOrEqual,
+            Comparison::GreaterThan => BinaryOp::GreaterThan,
+            Comparison::GreaterThanOrEqual => BinaryOp::GreaterThanOrEqual,
+        }
+    }
+}
+
 fn parse_fn_call_params(tokens: &[Token], idx: usize) -> Result<(Vec<Expr>, u8), Error> {
     let mut params = Vec::new();
     let mut idx2 = idx;
@@ -89,10 +102,10 @@ fn parse_fn_call_params(tokens: &[Token], idx: usize) -> Result<(Vec<Expr>, u8),
             .get(idx2)
             .ok_or(Error::unexpected_eof("parse_fn_call_params"))?;
         match &token.token {
-            TokenType::Identifier(ident) => {
-                params.push(Expr::Identifier(ident.to_owned()));
-                idx2 += 1;
-            }
+            // TokenType::Identifier(ident) => {
+            //     params.push(Expr::Identifier(ident.to_owned()));
+            //     idx2 += 1;
+            // }
             TokenType::Comma => {
                 idx2 += 1;
             }
@@ -153,7 +166,7 @@ fn parse_fn(tokens: &[Token], idx: usize) -> Result<(Stmt, u8), Error> {
                     params: params.0,
                     body: body.0,
                 },
-                2 + params.1 + body.1 as u8,
+                5 + params.1 + body.1 as u8,
             ))
         }
         _ => Err(Error::syntax_error(token, "function name", "parse_fn")),
@@ -189,55 +202,116 @@ fn parse_identifier(tokens: &[Token], name: String, idx: usize) -> Result<(Stmt,
     }
 }
 
-fn parse_primitive(tokens: &[Token], idx: usize) -> Result<Expr, Error> {
+/// Parses a primary expression: number, string, identifier, or function call
+/// Returns the parsed expression and the number of tokens consumed
+fn parse_primary(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
     let token = tokens
         .get(idx)
-        .ok_or(Error::unexpected_eof("parse_primitive"))?;
-    match token.token.to_owned() {
-        TokenType::Number(num) => Ok(Expr::Number(num)),
-        TokenType::String(str) => Ok(Expr::String(str)),
-        TokenType::Identifier(ident) => Ok(Expr::Identifier(ident)), // TODO: function calls
+        .ok_or(Error::unexpected_eof("parse_primary"))?;
+
+    match &token.token {
+        TokenType::Number(num) => Ok((Expr::Number(*num), 1)),
+        TokenType::String(str) => Ok((Expr::String(str.clone()), 1)),
+        TokenType::Identifier(ident) => {
+            // Check if this is a function call
+            if let Some(next_token) = tokens.get(idx + 1) {
+                if next_token.token == TokenType::BracketOpen {
+                    let args = parse_fn_call_params(tokens, idx + 2)?;
+                    return Ok((
+                        Expr::FunctionCall {
+                            name: ident.clone(),
+                            args: args.0,
+                        },
+                        3 + args.1,
+                    ));
+                }
+            }
+            Ok((Expr::Identifier(ident.clone()), 1))
+        }
         _ => Err(Error::syntax_error(
             token,
-            "number or string literal",
-            "parse_primitive",
+            "number, string, or identifier",
+            "parse_primary",
         )),
     }
 }
 
-/// expression
-/// can be a number, string, function call, binary operation
-/// returns the parsed expression and the number of tokens consumed
-/// expression until the next token is not a binary operator
-fn parse_expr(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
-    let token = tokens.get(idx).ok_or(Error::unexpected_eof("parse_expr"))?;
-    let next_token_option = tokens.get(idx + 1);
+/// Parses multiplication and division (higher precedence)
+/// Returns the parsed expression and the number of tokens consumed
+fn parse_term(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
+    let (mut left, mut consumed) = parse_primary(tokens, idx)?;
 
-    if let Some(next_token) = next_token_option {
-        println!("Parse expr: Next token: {:?}", next_token);
-        // check for binary operator
-        if let TokenType::Operator(op) = &next_token.token {
-            let right = parse_expr(tokens, idx + 2)?;
-            return Ok((
-                Expr::Binary {
-                    left: Box::new(parse_primitive(tokens, idx)?),
-                    op: BinaryOp::from(op),
-                    right: Box::new(right.0),
-                },
-                2 + right.1,
-            ));
-        }
-
-        // function call
-        if let TokenType::BracketOpen = &next_token.token {
-            let args = parse_fn_call_params(tokens, idx + 2)?;
-            let name: String = token.clone().token.into();
-            return Ok((Expr::FunctionCall { name, args: args.0 }, 3 + args.1));
+    loop {
+        let next_idx = idx + consumed as usize;
+        if let Some(next_token) = tokens.get(next_idx) {
+            match &next_token.token {
+                TokenType::Operator(Operator::Multiply) | TokenType::Operator(Operator::Divide) => {
+                    let op = BinaryOp::from(match &next_token.token {
+                        TokenType::Operator(op) => op,
+                        _ => unreachable!(),
+                    });
+                    let (right, right_consumed) = parse_primary(tokens, next_idx + 1)?;
+                    left = Expr::Binary {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                    };
+                    consumed += 1 + right_consumed;
+                }
+                _ => break,
+            }
+        } else {
+            break;
         }
     }
 
-    // check for number or string literal
-    Ok((parse_primitive(tokens, idx)?, 1))
+    Ok((left, consumed))
+}
+
+/// Parses addition, subtraction, and comparisons (lower precedence)
+/// Returns the parsed expression and the number of tokens consumed
+fn parse_expr(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
+    let (mut left, mut consumed) = parse_term(tokens, idx)?;
+
+    loop {
+        let next_idx = idx + consumed as usize;
+        if let Some(next_token) = tokens.get(next_idx) {
+            println!("Parse expr: Next token: {:?}", next_token);
+            match &next_token.token {
+                TokenType::Operator(Operator::Add) | TokenType::Operator(Operator::Subtract) => {
+                    let op = BinaryOp::from(match &next_token.token {
+                        TokenType::Operator(op) => op,
+                        _ => unreachable!(),
+                    });
+                    let (right, right_consumed) = parse_term(tokens, next_idx + 1)?;
+                    left = Expr::Binary {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                    };
+                    consumed += 1 + right_consumed;
+                }
+                TokenType::Comparison(cmp) => {
+                    let op = BinaryOp::from(cmp);
+                    let (right, right_consumed) = parse_term(tokens, next_idx + 1)?;
+                    left = Expr::Binary {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                    };
+                    consumed += 1 + right_consumed;
+                }
+                _ => {
+                    println!("End of expression: {:?}", next_token);
+                    break;
+                }
+            }
+        } else {
+            break;
+        }
+    }
+
+    Ok((left, consumed))
 }
 
 fn parse_let(tokens: &[Token], current_token: &Token, idx: usize) -> Result<(Stmt, u8), Error> {
@@ -267,7 +341,29 @@ fn parse_let(tokens: &[Token], current_token: &Token, idx: usize) -> Result<(Stm
         name: name.to_owned(),
         value: value.0,
     };
-    Ok((let_stmt, value.1 + 2))
+    Ok((let_stmt, value.1 + 3))
+}
+
+fn parse_if(tokens: &[Token], idx: usize) -> Result<(Stmt, u8), Error> {
+    let condition = parse_expr(tokens, idx + 1)?;
+    println!("condition: {:?}", condition);
+    // expect {
+    let open_brace_token = tokens
+        .get(idx + condition.1 as usize + 1)
+        .ok_or(Error::unexpected_eof("parse_if"))?;
+    if open_brace_token.token != TokenType::BraceOpen {
+        return Err(Error::syntax_error(open_brace_token, "{", "parse_if"));
+    }
+
+    // then
+    let then_branch = parse_block(tokens, idx + condition.1 as usize + 2)?;
+
+    let if_stmt = Stmt::If {
+        condition: condition.0,
+        then_branch: then_branch.0,
+        else_branch: Option::None, // TODO
+    };
+    Ok((if_stmt, 2 + condition.1 + then_branch.1))
 }
 
 pub fn parse_block(tokens: &[Token], mut idx: usize) -> Result<(Vec<Stmt>, u8), Error> {
@@ -287,32 +383,30 @@ pub fn parse_block(tokens: &[Token], mut idx: usize) -> Result<(Vec<Stmt>, u8), 
 
             // end of block
             if token.token == TokenType::BraceClose {
-                return Ok((body, 3 + (idx - initial_idx) as u8));
+                return Ok((body, (idx - initial_idx + 1) as u8));
             }
 
             let stmt = match &token.token {
                 TokenType::KWLet => parse_let(tokens, token, idx),
                 TokenType::Identifier(name) => parse_identifier(tokens, name.to_owned(), idx),
                 TokenType::KWFn => parse_fn(tokens, idx),
+                TokenType::KWIf => parse_if(tokens, idx),
                 TokenType::KWReturn => {
                     let value = parse_expr(tokens, idx + 1)?;
 
                     let return_stmt = Stmt::Return(value.0);
-                    Ok((return_stmt, value.1 + 2))
+                    Ok((return_stmt, value.1 + 1))
                 }
                 _ => Err(Error::unimplemented_token(token, "parse_block")),
             }?;
             body.push(stmt.0);
             println!("idx: {} + {}", idx, stmt.1);
-            if token.token == TokenType::KWReturn {
-                return Ok((body, stmt.1 + 3));
-            }
             idx += stmt.1 as usize;
+        } else {
+            break;
         }
-
-        idx += 1;
     }
-    Ok((body, idx as u8))
+    Ok((body, (idx - initial_idx) as u8))
 }
 
 pub fn parse(tokens: &[Token]) -> Result<Program, Error> {

@@ -1,29 +1,30 @@
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TokenType {
-    KWLet,              // let
-    KWFn,               // fn
-    KWReturn,           // return
-    KWIf,               // if
-    KWWhile,            // while
-    Identifier(String), // identifier (e.g. a)
-    Number(i32),        // number literal
-    String(String),     // string literal
-    Operator(Operator), // operator (e.g. +)
-    Equal,              // ==
-    NotEqual,           // !=
-    LessThan,           // <
-    LessThanOrEqual,    // <=
-    GreaterThan,        // >
-    GreaterThanOrEqual, // >=
-    Assign,             // =
-    BracketOpen,        // (
-    BracketClose,       // )
-    BraceOpen,          // {
-    BraceClose,         // }
-    Comma,              // ,
-    Semicolon,          // ;
-    Dot,                // .
-    Comment(String),    // comment (e.g. // comment or # comment)
+    KWLet,                  // let
+    KWFn,                   // fn
+    KWReturn,               // return
+    KWIf,                   // if
+    KWWhile,                // while
+    Identifier(String),     // identifier (e.g. a)
+    Number(i32),            // number literal
+    String(String),         // string literal
+    Operator(Operator),     // operator (e.g. +)
+    Comparison(Comparison), // comparison (e.g. ==)
+    // Equal,              // ==
+    // NotEqual,           // !=
+    // LessThan,           // <
+    // LessThanOrEqual,    // <=
+    // GreaterThan,        // >
+    // GreaterThanOrEqual, // >=
+    Assign,          // =
+    BracketOpen,     // (
+    BracketClose,    // )
+    BraceOpen,       // {
+    BraceClose,      // }
+    Comma,           // ,
+    Semicolon,       // ;
+    Dot,             // .
+    Comment(String), // comment (e.g. // comment or # comment)
 }
 
 impl From<TokenType> for String {
@@ -38,12 +39,13 @@ impl From<TokenType> for String {
             TokenType::Number(num) => num.to_string(),
             TokenType::String(str) => str,
             TokenType::Operator(op) => op.into(),
-            TokenType::Equal => "==".to_string(),
-            TokenType::NotEqual => "!=".to_string(),
-            TokenType::LessThan => "<".to_string(),
-            TokenType::LessThanOrEqual => "<=".to_string(),
-            TokenType::GreaterThan => ">".to_string(),
-            TokenType::GreaterThanOrEqual => ">=".to_string(),
+            TokenType::Comparison(cmp) => cmp.into(),
+            // TokenType::Equal => "==".to_string(),
+            // TokenType::NotEqual => "!=".to_string(),
+            // TokenType::LessThan => "<".to_string(),
+            // TokenType::LessThanOrEqual => "<=".to_string(),
+            // TokenType::GreaterThan => ">".to_string(),
+            // TokenType::GreaterThanOrEqual => ">=".to_string(),
             TokenType::Assign => "=".to_string(),
             TokenType::BracketOpen => "(".to_string(),
             TokenType::BracketClose => ")".to_string(),
@@ -72,6 +74,29 @@ impl Into<String> for Operator {
             Operator::Subtract => "-".to_string(),
             Operator::Multiply => "*".to_string(),
             Operator::Divide => "/".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Comparison {
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+}
+
+impl Into<String> for Comparison {
+    fn into(self) -> String {
+        match self {
+            Comparison::Equal => "==".to_string(),
+            Comparison::NotEqual => "!=".to_string(),
+            Comparison::LessThan => "<".to_string(),
+            Comparison::LessThanOrEqual => "<=".to_string(),
+            Comparison::GreaterThan => ">".to_string(),
+            Comparison::GreaterThanOrEqual => ">=".to_string(),
         }
     }
 }
@@ -150,7 +175,11 @@ pub fn tokenize(input: String) -> Vec<Token> {
             '=' => {
                 if let Some('=') = chars.peek() {
                     chars.next();
-                    tokens.push(Token::new(TokenType::Equal, line, column));
+                    tokens.push(Token::new(
+                        TokenType::Comparison(Comparison::Equal),
+                        line,
+                        column,
+                    ));
                 } else {
                     tokens.push(Token::new(TokenType::Assign, line, column));
                 }
@@ -158,23 +187,43 @@ pub fn tokenize(input: String) -> Vec<Token> {
             '!' => {
                 if let Some('=') = chars.peek() {
                     chars.next();
-                    tokens.push(Token::new(TokenType::NotEqual, line, column));
+                    tokens.push(Token::new(
+                        TokenType::Comparison(Comparison::NotEqual),
+                        line,
+                        column,
+                    ));
                 }
             }
             '<' => {
                 if let Some('=') = chars.peek() {
                     chars.next();
-                    tokens.push(Token::new(TokenType::LessThanOrEqual, line, column));
+                    tokens.push(Token::new(
+                        TokenType::Comparison(Comparison::LessThanOrEqual),
+                        line,
+                        column,
+                    ));
                 } else {
-                    tokens.push(Token::new(TokenType::LessThan, line, column));
+                    tokens.push(Token::new(
+                        TokenType::Comparison(Comparison::LessThan),
+                        line,
+                        column,
+                    ));
                 }
             }
             '>' => {
                 if let Some('=') = chars.peek() {
                     chars.next();
-                    tokens.push(Token::new(TokenType::GreaterThanOrEqual, line, column));
+                    tokens.push(Token::new(
+                        TokenType::Comparison(Comparison::GreaterThanOrEqual),
+                        line,
+                        column,
+                    ));
                 } else {
-                    tokens.push(Token::new(TokenType::GreaterThan, line, column));
+                    tokens.push(Token::new(
+                        TokenType::Comparison(Comparison::GreaterThan),
+                        line,
+                        column,
+                    ));
                 }
             }
             '+' => tokens.push(Token::new(TokenType::Operator(Operator::Add), line, column)),
