@@ -1,4 +1,10 @@
 let a = 1;
 a = 2;
+print("hello");
 
+fn test() {
+    print("test");
+}
+
+test();
 print(a);

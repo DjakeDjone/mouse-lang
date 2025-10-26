@@ -81,11 +81,13 @@ impl From<&Operator> for BinaryOp {
     }
 }
 
-fn parse_params(tokens: &[Token], idx: usize) -> Result<(Vec<Expr>, u8), Error> {
+fn parse_fn_call_params(tokens: &[Token], idx: usize) -> Result<(Vec<Expr>, u8), Error> {
     let mut params = Vec::new();
     let mut idx2 = idx;
     loop {
-        let token = tokens.get(idx2).ok_or(Error::unexpected_eof())?;
+        let token = tokens
+            .get(idx2)
+            .ok_or(Error::unexpected_eof("parse_fn_call_params"))?;
         match &token.token {
             TokenType::Identifier(ident) => {
                 params.push(Expr::Identifier(ident.to_owned()));
@@ -97,14 +99,72 @@ fn parse_params(tokens: &[Token], idx: usize) -> Result<(Vec<Expr>, u8), Error> 
             TokenType::BracketClose => {
                 return Ok((params, (idx2 - idx) as u8));
             }
-            _ => return Err(Error::syntax_error(token, "identifier or closing bracket")),
+            _ => {
+                let (expr, len) = parse_expr(tokens, idx2)?;
+                params.push(expr);
+                idx2 += len as usize;
+            }
         }
+    }
+}
+
+fn parse_params(tokens: &[Token], idx: usize) -> Result<(Vec<String>, u8), Error> {
+    let mut params: Vec<String> = Vec::new();
+    let mut idx2 = idx;
+    // only strings
+    while idx2 < tokens.len() {
+        let token = tokens
+            .get(idx2)
+            .ok_or(Error::unexpected_eof("parse_params"))?;
+        match &token.token {
+            TokenType::Identifier(ident) => {
+                params.push(ident.to_owned());
+                idx2 += 1;
+            }
+            TokenType::Comma => {
+                idx2 += 1;
+            }
+            TokenType::BracketClose => {
+                return Ok((params, (idx2 - idx) as u8));
+            }
+            _ => {
+                return Err(Error::syntax_error(
+                    token,
+                    "string literal or closing bracket",
+                    "parse_params",
+                ))
+            }
+        }
+    }
+    Err(Error::unexpected_eof("parse_params"))
+}
+
+fn parse_fn(tokens: &[Token], idx: usize) -> Result<(Stmt, u8), Error> {
+    let token = tokens
+        .get(idx + 1)
+        .ok_or(Error::unexpected_eof("parse_fn"))?;
+    match &token.token {
+        TokenType::Identifier(name) => {
+            let params = parse_params(tokens, idx + 3)?;
+            let body = parse_block(tokens, idx + params.1 as usize + 5)?;
+            Ok((
+                Stmt::Function {
+                    name: name.to_owned(),
+                    params: params.0,
+                    body: body.0,
+                },
+                2 + params.1 + body.1 as u8,
+            ))
+        }
+        _ => Err(Error::syntax_error(token, "function name", "parse_fn")),
     }
 }
 
 fn parse_identifier(tokens: &[Token], name: String, idx: usize) -> Result<(Stmt, u8), Error> {
     println!("parse identifier");
-    let token = tokens.get(idx + 1).ok_or(Error::unexpected_eof())?;
+    let token = tokens
+        .get(idx + 1)
+        .ok_or(Error::unexpected_eof("parse_identifier"))?;
     match token.token {
         TokenType::Assign => {
             let value = parse_expr(tokens, idx + 2)?;
@@ -121,17 +181,27 @@ fn parse_identifier(tokens: &[Token], name: String, idx: usize) -> Result<(Stmt,
             let expr = parse_expr(tokens, idx)?;
             Ok((Stmt::Expression(expr.0), expr.1))
         }
-        _ => Err(Error::syntax_error(token, "assignment operator")),
+        _ => Err(Error::syntax_error(
+            token,
+            "assignment operator",
+            "parse_identifier",
+        )),
     }
 }
 
 fn parse_primitive(tokens: &[Token], idx: usize) -> Result<Expr, Error> {
-    let token = tokens.get(idx).ok_or(Error::unexpected_eof())?;
+    let token = tokens
+        .get(idx)
+        .ok_or(Error::unexpected_eof("parse_primitive"))?;
     match token.token.to_owned() {
         TokenType::Number(num) => Ok(Expr::Number(num)),
         TokenType::String(str) => Ok(Expr::String(str)),
         TokenType::Identifier(ident) => Ok(Expr::Identifier(ident)), // TODO: function calls
-        _ => Err(Error::syntax_error(token, "number or string literal")),
+        _ => Err(Error::syntax_error(
+            token,
+            "number or string literal",
+            "parse_primitive",
+        )),
     }
 }
 
@@ -139,7 +209,7 @@ fn parse_primitive(tokens: &[Token], idx: usize) -> Result<Expr, Error> {
 /// can be a number, string, function call, binary operation
 /// returns the parsed expression and the number of tokens consumed
 fn parse_expr(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
-    let token = tokens.get(idx).ok_or(Error::unexpected_eof())?;
+    let token = tokens.get(idx).ok_or(Error::unexpected_eof("parse_expr"))?;
     let next_token_option = tokens.get(idx + 1);
 
     if let Some(next_token) = next_token_option {
@@ -158,7 +228,7 @@ fn parse_expr(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
 
         // function call
         if let TokenType::BracketOpen = &next_token.token {
-            let args = parse_params(tokens, idx + 2)?;
+            let args = parse_fn_call_params(tokens, idx + 2)?;
             let name: String = token.clone().token.into();
             return Ok((Expr::FunctionCall { name, args: args.0 }, 2 + args.1));
         }
@@ -169,20 +239,23 @@ fn parse_expr(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
 }
 
 fn parse_let(tokens: &[Token], current_token: &Token, idx: usize) -> Result<(Stmt, u8), Error> {
-    let name_token = tokens
-        .get(idx + 1)
-        .ok_or(Error::syntax_error(current_token, "identifier"))?;
+    let name_token = tokens.get(idx + 1).ok_or(Error::syntax_error(
+        current_token,
+        "identifier",
+        "parse_let",
+    ))?;
     let name = match &name_token.token {
         TokenType::Identifier(name) => name,
-        _ => return Err(Error::syntax_error(name_token, "identifier")),
+        _ => return Err(Error::syntax_error(name_token, "identifier", "parse_let")),
     };
 
     // expect equal sign
-    let equal_token = tokens
-        .get(idx + 2)
-        .ok_or(Error::syntax_error(current_token, "="))?;
+    let equal_token =
+        tokens
+            .get(idx + 2)
+            .ok_or(Error::syntax_error(current_token, "=", "parse_let"))?;
     if equal_token.token != TokenType::Assign {
-        return Err(Error::syntax_error(equal_token, "="));
+        return Err(Error::syntax_error(equal_token, "=", "parse_let"));
     }
 
     // value can be a value or an expression
@@ -195,12 +268,9 @@ fn parse_let(tokens: &[Token], current_token: &Token, idx: usize) -> Result<(Stm
     Ok((let_stmt, value.1 + 2))
 }
 
-pub fn parse(tokens: &[Token]) -> Result<Program, Error> {
-    let mut program = Program {
-        statements: Vec::new(),
-    };
-
-    let mut idx = 0;
+pub fn parse_block(tokens: &[Token], mut idx: usize) -> Result<(Vec<Stmt>, u8), Error> {
+    let mut body = Vec::new();
+    let initial_idx = idx;
 
     while idx < tokens.len() {
         let current_token = tokens.get(idx);
@@ -216,14 +286,26 @@ pub fn parse(tokens: &[Token]) -> Result<Program, Error> {
             let stmt = match &token.token {
                 TokenType::KWLet => parse_let(tokens, token, idx),
                 TokenType::Identifier(name) => parse_identifier(tokens, name.to_owned(), idx),
-                _ => Err(Error::unimplemented_token(token)),
+                TokenType::KWFn => parse_fn(tokens, idx),
+                TokenType::BraceClose => {
+                    return Ok((body, 3 + (idx - initial_idx) as u8));
+                }
+                _ => Err(Error::unimplemented_token(token, "parse_block")),
             }?;
-            program.statements.push(stmt.0);
+            body.push(stmt.0);
+            println!("idx: {} + {}", idx, stmt.1);
             idx += stmt.1 as usize;
         }
 
         idx += 1;
     }
+    Ok((body, idx as u8))
+}
+
+pub fn parse(tokens: &[Token]) -> Result<Program, Error> {
+    let program = Program {
+        statements: parse_block(tokens, 0)?.0,
+    };
 
     Ok(program)
 }

@@ -97,11 +97,17 @@ pub fn tokenize(input: String) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut chars = input.chars().peekable();
 
-    let line = 1;
-    let column = 1;
+    let mut line = 0;
+    let mut column = 0;
     while let Some(c) = chars.next() {
+        column += 1;
         match c {
-            ' ' | '\t' | '\n' => {}
+            ' ' | '\t' | '\n' => {
+                if c == '\n' {
+                    line += 1;
+                    column = 0;
+                }
+            }
             ';' => tokens.push(Token::new(TokenType::Semicolon, line, column)),
             ',' => tokens.push(Token::new(TokenType::Comma, line, column)),
             '.' => tokens.push(Token::new(TokenType::Dot, line, column)),
@@ -116,6 +122,8 @@ pub fn tokenize(input: String) -> Vec<Token> {
                     while let Some(&c) = chars.peek() {
                         chars.next();
                         if c == '\n' {
+                            line += 1;
+                            column = 0;
                             break;
                         }
                     }
@@ -133,6 +141,8 @@ pub fn tokenize(input: String) -> Vec<Token> {
                 while let Some(&c) = chars.peek() {
                     chars.next();
                     if c == '\n' {
+                        line += 1;
+                        column = 0;
                         break;
                     }
                 }

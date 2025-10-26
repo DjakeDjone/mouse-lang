@@ -31,26 +31,29 @@ pub struct Error {
     pub column: u32,
 
     pub error_type: ErrorTypes,
+    pub throw_location: String,
 }
 
 impl Error {
-    pub fn new(line: u32, column: u32, error_type: ErrorTypes) -> Self {
+    pub fn new(line: u32, column: u32, error_type: ErrorTypes, throw_location: &str) -> Self {
         Error {
             line,
             column,
             error_type,
+            throw_location: throw_location.to_string(),
         }
     }
 
-    pub fn unimplemented_token(token: &Token) -> Self {
+    pub fn unimplemented_token(token: &Token, throw_location: &str) -> Self {
         Error {
             line: token.line,
             column: token.column,
             error_type: ErrorTypes::LexicalError(format!("Unimplemented token: {:?}", token)),
+            throw_location: throw_location.to_string(),
         }
     }
 
-    pub fn syntax_error(token: &Token, expected: &str) -> Self {
+    pub fn syntax_error(token: &Token, expected: &str, throw_location: &str) -> Self {
         Error {
             line: token.line,
             column: token.column,
@@ -58,14 +61,16 @@ impl Error {
                 Some(token.clone()),
                 expected.to_string(),
             )),
+            throw_location: throw_location.to_string(),
         }
     }
 
-    pub fn unexpected_eof() -> Self {
+    pub fn unexpected_eof(throw_location: &str) -> Self {
         Error {
             line: 0,
             column: 0,
             error_type: ErrorTypes::SyntaxError(SyntaxError::UnexpectedEof),
+            throw_location: throw_location.to_string(),
         }
     }
 }
