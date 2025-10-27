@@ -16,15 +16,16 @@ pub enum TokenType {
     // LessThanOrEqual,    // <=
     // GreaterThan,        // >
     // GreaterThanOrEqual, // >=
-    Assign,          // =
-    BracketOpen,     // (
-    BracketClose,    // )
-    BraceOpen,       // {
-    BraceClose,      // }
-    Comma,           // ,
-    Semicolon,       // ;
-    Dot,             // .
-    Comment(String), // comment (e.g. // comment or # comment)
+    Assign,             // =
+    BracketOpen,        // (
+    BracketClose,       // )
+    BraceOpen,          // {
+    BraceClose,         // }
+    Comma,              // ,
+    Semicolon,          // ;
+    Dot,                // .
+    ObjectName(String), // object name (e.g. std::split_string() -> `std`)
+    Comment(String),    // comment (e.g. // comment or # comment)
 }
 
 impl From<TokenType> for String {
@@ -54,6 +55,7 @@ impl From<TokenType> for String {
             TokenType::Comma => ",".to_string(),
             TokenType::Semicolon => ";".to_string(),
             TokenType::Dot => ".".to_string(),
+            TokenType::ObjectName(name) => name,
             TokenType::Comment(comment) => comment,
         }
     }
@@ -268,6 +270,14 @@ pub fn tokenize(input: String) -> Vec<Token> {
                     while let Some(&c) = chars.peek() {
                         if c.is_alphanumeric() || c == '_' {
                             identifier.push(chars.next().unwrap());
+                        } else if c == '.' {
+                            tokens.push(Token::new(
+                                TokenType::ObjectName(identifier.clone()),
+                                line,
+                                column,
+                            ));
+                            identifier.clear();
+                            chars.next();
                         } else {
                             break;
                         }

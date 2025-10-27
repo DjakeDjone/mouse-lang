@@ -1,8 +1,68 @@
+use chumsky::{container::Container, prelude::todo};
+
 use crate::{
     parser::{BinaryOp, Expr, Program, Stmt},
     std_lib,
 };
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Object {
+    name: String,
+    properties: HashMap<String, Value>,
+}
+
+impl Object {
+    pub fn new(name: &str, properties: HashMap<String, Value>) -> Self {
+        Object {
+            name: name.to_string(),
+            properties,
+        }
+    }
+
+    pub fn add_property(&mut self, key: String, value: Value) {
+        self.properties.insert(key, value);
+    }
+
+    pub fn register_bind_fn(
+        &mut self,
+        name: &str,
+        func: fn(&mut Interpreter, Vec<Value>) -> Result<Value, String>,
+    ) {
+        self.properties.insert(
+            name.to_string(),
+            Value::BindFunction(name.to_string(), vec![], func),
+        );
+    }
+
+    pub fn get_property(&self, name: &str) -> Option<&Value> {
+        self.properties.get(name)
+    }
+
+    pub fn get_function(&self, name: &str) -> Option<(&Vec<String>, &Vec<Stmt>)> {
+        let function = self.get_property(name);
+        if let Some(Value::Function(_, ref params, ref body)) = function {
+            Some((params, body))
+        } else {
+            None
+        }
+    }
+}
+
+impl std::fmt::Display for Object {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{{{}: {}}}",
+            self.name,
+            self.properties
+                .iter()
+                .map(|(k, v)| format!("{}:{}", k, v))
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -11,7 +71,26 @@ pub enum Value {
     Void,
     Array(Vec<Value>),
     Function(String, Vec<String>, Vec<Stmt>), // name, params, body
-    Object(HashMap<String, Value>),           // properties
+    BindFunction(
+        String,
+        Vec<String>,
+        fn(&mut Interpreter, Vec<Value>) -> Result<Value, String>,
+    ),
+    Object(Object), // properties
+}
+
+impl Value {
+    pub fn to_bool(&self) -> bool {
+        match self {
+            Value::Number(n) => *n != 0,
+            Value::String(s) => !s.is_empty(),
+            Value::Void => false,
+            Value::Array(arr) => !arr.is_empty(),
+            Value::Function(_, _, _) => true,
+            Value::BindFunction(_, _, _) => true,
+            Value::Object(objct) => !objct.properties.is_empty(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,15 +114,10 @@ impl std::fmt::Display for Value {
                     .join(", ")
             ),
             Value::Function(name, _, _) => write!(f, "<function {}>", name),
-            Value::Object(props) => write!(
-                f,
-                "{{{}}}",
-                props
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v))
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
+            Value::BindFunction(name, params, func) => {
+                write!(f, "<bound function {}({})>", name, params.join(", "))
+            }
+            Value::Object(objct) => write!(f, "{{{}}}", objct),
         }
     }
 }
@@ -53,7 +127,7 @@ pub type NativeFn = fn(&mut Interpreter, Vec<Value>) -> Result<Value, String>;
 pub struct Environment {
     pub variables: HashMap<String, Value>,
     pub functions: HashMap<String, (Vec<String>, Vec<Stmt>)>, // (params, body)
-    pub native_functions: HashMap<String, NativeFn>,
+    pub objects: HashMap<String, Object>,
 }
 
 impl Environment {
@@ -61,8 +135,12 @@ impl Environment {
         let mut env = Environment {
             variables: HashMap::new(),
             functions: HashMap::new(),
-            native_functions: HashMap::new(),
+            objects: HashMap::new(),
         };
+
+        // all functions are in the default object
+        env.objects
+            .insert("".to_string(), Object::new("", HashMap::new()));
 
         // Register native functions
         env.register_native_functions();
@@ -70,20 +148,38 @@ impl Environment {
         env
     }
 
+    pub fn create_sub_environment(&self) -> Environment {
+        let mut env = Environment::new();
+
+        // copy all functions and classes
+        env.functions = self.functions.clone();
+        env.objects = self.objects.clone();
+        // TODO: copy global variables
+
+        env
+    }
+
     fn register_native_functions(&mut self) {
         // print
-        self.native_functions
-            .insert("print".to_string(), std_lib::print::print);
-        self.native_functions.insert(
-            "std.socketServer".to_string(),
-            std_lib::socket_server::socket_server,
-        );
-        self.native_functions
-            .insert("std.sleep".to_string(), std_lib::sleep::sleep);
-        self.native_functions.insert(
-            "std.split_str".to_string(),
-            std_lib::str_utils::split_string,
-        );
+        // self.native_functions
+        //     .insert("print".to_string(), std_lib::print::print);
+        // self.native_functions.insert(
+        //     "std::socketServer".to_string(),
+        //     std_lib::socket_server::socket_server,
+        // );
+        // self.native_functions
+        //     .insert("std::sleep".to_string(), std_lib::sleep::sleep);
+        // self.native_functions.insert(
+        //     "std::split_str".to_string(),
+        //     std_lib::str_utils::split_string,
+        // );
+        let mut std_object = Object::new("std", HashMap::new());
+        std_object.register_bind_fn("print", std_lib::print::print);
+        // std_object.register_method("socketServer", std_lib::socket_server::socket_server);
+        std_object.register_bind_fn("sleep", std_lib::sleep::sleep);
+        std_object.register_bind_fn("split_str", std_lib::str_utils::split_string);
+
+        self.objects.insert("std".to_string(), std_object);
     }
 
     pub fn get_variable(&self, name: &str) -> Option<&Value> {
@@ -94,16 +190,17 @@ impl Environment {
         self.variables.insert(name, value);
     }
 
-    pub fn get_function(&self, name: &str) -> Option<&(Vec<String>, Vec<Stmt>)> {
-        self.functions.get(name)
+    pub fn get_function(&self, name: &str) -> Option<(&Vec<String>, &Vec<Stmt>)> {
+        self.objects.get("").unwrap().get_function(name)
     }
 
     pub fn set_function(&mut self, name: String, params: Vec<String>, body: Vec<Stmt>) {
-        self.functions.insert(name, (params, body));
-    }
-
-    pub fn get_native_function(&self, name: &str) -> Option<&NativeFn> {
-        self.native_functions.get(name)
+        self.objects
+            .get("")
+            .expect("Default object not found")
+            .to_owned()
+            .add_property(name.clone(), Value::Function(name, params, body));
+        // self.functions.insert(name, (params, body));
     }
 }
 
@@ -115,6 +212,12 @@ impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
             env: Environment::new(),
+        }
+    }
+
+    pub fn create_sub_interpreter(&self) -> Interpreter {
+        Interpreter {
+            env: self.env.create_sub_environment(),
         }
     }
 
@@ -167,16 +270,8 @@ impl Interpreter {
                 else_branch: _,
             } => {
                 let condition_value = self.evaluate_expression(condition)?;
-                let is_truthy = match condition_value {
-                    Value::Number(n) => n != 0,
-                    Value::String(s) => !s.is_empty(),
-                    Value::Void => false,
-                    Value::Array(arr) => !arr.is_empty(),
-                    Value::Function(_, _, _) => true,
-                    Value::Object(props) => !props.is_empty(),
-                };
 
-                if is_truthy {
+                if condition_value.to_bool() {
                     for stmt in then_branch {
                         match self.execute_statement(stmt)? {
                             ControlFlow::Return(value) => {
@@ -191,16 +286,8 @@ impl Interpreter {
             Stmt::While { condition, body } => {
                 loop {
                     let condition_value = self.evaluate_expression(condition)?;
-                    let is_truthy = match condition_value {
-                        Value::Number(n) => n != 0,
-                        Value::String(s) => !s.is_empty(),
-                        Value::Void => false,
-                        Value::Array(arr) => !arr.is_empty(),
-                        Value::Function(_, _, _) => true,
-                        Value::Object(props) => !props.is_empty(),
-                    };
 
-                    if !is_truthy {
+                    if !condition_value.to_bool() {
                         break;
                     }
 
@@ -228,8 +315,8 @@ impl Interpreter {
             Expr::String(s) => Ok(Value::String(s.clone())),
             Expr::Identifier(name) => {
                 // Check if it's a function that can be used as a value
-                if let Some((params, body)) = self.env.get_function(name).cloned() {
-                    Ok(Value::Function(name.clone(), params, body))
+                if let Some((params, body)) = self.env.get_function(name) {
+                    Ok(Value::Function(name.clone(), params.clone(), body.clone()))
                 } else {
                     self.env
                         .get_variable(name)
@@ -317,12 +404,12 @@ impl Interpreter {
                 }
 
                 // Check for native functions first
-                if let Some(native_fn) = self.env.get_native_function(name).cloned() {
-                    return native_fn(self, arg_values);
-                }
+                // if let Some(native_fn) = self.env.get_native_function(name).cloned() {
+                //     return native_fn(self, arg_values);
+                // }
 
                 // Check for user-defined functions
-                if let Some((params, body)) = self.env.get_function(name).cloned() {
+                if let Some((params, body)) = self.env.get_function(name) {
                     if params.len() != arg_values.len() {
                         return Err(format!(
                             "Function {} expects {} arguments, got {}",
@@ -334,9 +421,7 @@ impl Interpreter {
 
                     // new interpreter for the function call with fresh variables)
                     let mut func_interpreter = Interpreter::new();
-                    // Copy all functions to the new interpreter
-                    func_interpreter.env.functions = self.env.functions.clone();
-                    func_interpreter.env.native_functions = self.env.native_functions.clone();
+                    func_interpreter.env = self.env.create_sub_environment();
 
                     // Set function parameters in the new interpreter
                     for (param, value) in params.iter().zip(arg_values.iter()) {
@@ -346,7 +431,7 @@ impl Interpreter {
                     }
 
                     // Execute the function body
-                    for stmt in &body {
+                    for stmt in body {
                         match func_interpreter.execute_statement(stmt)? {
                             ControlFlow::Return(value) => {
                                 return Ok(value);
@@ -360,10 +445,10 @@ impl Interpreter {
                     Err(format!("Undefined function: {}", name))
                 }
             }
-            Expr::MemberAccess {
-                object: _,
-                member: _,
-            } => Err("Member access should only appear in function call context".to_string()),
+            Expr::ObjectCall(name, object_member) => {
+                // TODO
+                todo!()
+            }
         }
     }
 }

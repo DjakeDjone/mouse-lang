@@ -16,10 +16,7 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
-    MemberAccess {
-        object: Box<Expr>,
-        member: String,
-    },
+    ObjectCall(String, Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,6 +170,7 @@ fn parse_fn(tokens: &[Token], idx: usize) -> Result<(Stmt, u8), Error> {
     }
 }
 
+/// Parse an identifier token. (e.g. `let x = 1;`)
 fn parse_identifier(tokens: &[Token], name: String, idx: usize) -> Result<(Stmt, u8), Error> {
     println!("parse identifier");
     let token = tokens
@@ -212,6 +210,13 @@ fn parse_primary(tokens: &[Token], idx: usize) -> Result<(Expr, u8), Error> {
     match &token.token {
         TokenType::Number(num) => Ok((Expr::Number(*num), 1)),
         TokenType::String(str) => Ok((Expr::String(str.clone()), 1)),
+        TokenType::ObjectName(name) => {
+            let object_member = parse_primary(tokens, idx + 1)?;
+            Ok((
+                Expr::ObjectCall(name.clone(), Box::new(object_member.0)),
+                object_member.1 + 1,
+            ))
+        }
         TokenType::Identifier(ident) => {
             // Check if this is a function call
             if let Some(next_token) = tokens.get(idx + 1) {
