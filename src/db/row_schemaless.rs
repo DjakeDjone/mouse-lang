@@ -1,11 +1,8 @@
-use chumsky::prelude::todo;
-
 use crate::db::query_engine::PreSelectedField;
 use crate::db::{query_engine, DBValue, DBValueType, FilterEntity};
 use std::collections::{HashMap, HashSet};
-use std::fs::OpenOptions;
-use std::io::{BufReader, Write};
-use std::iter::Map;
+use tokio::fs::OpenOptions;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 pub struct Settings {
     pub base_path: String,
@@ -21,7 +18,9 @@ impl TableRowSchemaless {
     pub async fn new(pk: String, settings: Settings) -> Self {
         // create file
         if !std::path::Path::new(&settings.base_path).exists() {
-            std::fs::create_dir_all(&settings.base_path).expect("Failed to create directory");
+            tokio::fs::create_dir_all(&settings.base_path)
+                .await
+                .expect("Failed to create directory");
         }
         Self {
             settings,
@@ -42,29 +41,39 @@ impl TableRowSchemaless {
             .create(true)
             .append(true)
             .open(format!("{}/{}", self.settings.base_path, self.primary_key))
+            .await
             .unwrap();
 
-        writeln!(file, "{}", serde_json::to_string(&data).unwrap()).unwrap();
+        // Serialize with bincode (2.0 API)
+        let config = bincode::config::standard();
+        let bytes = bincode::encode_to_vec(&data, config).unwrap();
+        // Write length prefix (4 bytes for u32)
+        let len = bytes.len() as u32;
+        file.write_all(&len.to_le_bytes()).await.unwrap();
+        // Write the actual data
+        file.write_all(&bytes).await.unwrap();
     }
 
     pub async fn drop(&mut self) {
         // TODO: delete cache
         // delete the file
-        std::fs::remove_file(format!("{}/{}", self.settings.base_path, self.primary_key))
+        tokio::fs::remove_file(format!("{}/{}", self.settings.base_path, self.primary_key))
+            .await
             .expect("Failed to remove file");
     }
 
     pub async fn truncate(&mut self) {
         // TODO: delete cache
         // remove all rows
-        std::fs::remove_file(format!("{}/{}", self.settings.base_path, self.primary_key))
-            .expect("Failed to remove file");
-        std::fs::File::create(format!("{}/{}", self.settings.base_path, self.primary_key))
+        let path = format!("{}/{}", self.settings.base_path, self.primary_key);
+        let _ = tokio::fs::remove_file(&path).await; // Ignore error if file doesn't exist
+        tokio::fs::File::create(&path)
+            .await
             .expect("Failed to create file");
     }
 
     pub async fn query(&self, query: FilterEntity) -> Vec<HashMap<String, DBValue>> {
-        let necessary_fields = query_engine::pre_select(&query).unwrap_or(
+        let _necessary_fields = query_engine::pre_select(&query).unwrap_or(
             self.known_columns
                 .iter()
                 .map(|col| PreSelectedField::from_column(col.clone()))
@@ -74,16 +83,28 @@ impl TableRowSchemaless {
         // later do preselect with partitioning etc.
         // for now just go though every row
         let mut result = Vec::new();
-        use std::io::BufRead;
-        use std::io::BufReader;
         let file = OpenOptions::new()
             .read(true)
             .open(format!("{}/{}", self.settings.base_path, self.primary_key))
+            .await
             .unwrap();
-        let reader = BufReader::new(file);
-        for line in reader.lines() {
-            let line = line.unwrap();
-            let row: HashMap<String, DBValue> = serde_json::from_str(&line).unwrap();
+        let mut reader = BufReader::new(file);
+
+        // Read length-prefixed binary records
+        loop {
+            let mut len_bytes = [0u8; 4];
+            match reader.read_exact(&mut len_bytes).await {
+                Ok(_) => {}
+                Err(_) => break, // EOF or error
+            }
+            let len = u32::from_le_bytes(len_bytes) as usize;
+
+            let mut buffer = vec![0u8; len];
+            reader.read_exact(&mut buffer).await.unwrap();
+
+            let config = bincode::config::standard();
+            let (row, _): (HashMap<String, DBValue>, usize) =
+                bincode::decode_from_slice(&buffer, config).unwrap();
             if query_engine::execute_query(&query, &row) {
                 result.push(row);
             }
@@ -95,13 +116,17 @@ impl TableRowSchemaless {
     pub async fn is_empty(&self) -> bool {
         let file = OpenOptions::new()
             .read(true)
-            .open(format!("{}/{}", self.settings.base_path, self.primary_key));
+            .open(format!("{}/{}", self.settings.base_path, self.primary_key))
+            .await;
 
         match file {
             Ok(f) => {
-                use std::io::BufRead;
                 let mut reader = BufReader::new(f);
-                reader.fill_buf().map(|buf| buf.is_empty()).unwrap_or(true)
+                reader
+                    .fill_buf()
+                    .await
+                    .map(|buf| buf.is_empty())
+                    .unwrap_or(true)
             }
             Err(_) => true, // If file doesn't exist, consider it empty
         }
@@ -111,6 +136,7 @@ impl TableRowSchemaless {
         let file = OpenOptions::new()
             .read(true)
             .open(format!("{}/{}", self.settings.base_path, self.primary_key))
+            .await
             .unwrap();
         let reader = BufReader::new(file);
         reader.buffer().iter().size_hint().0
@@ -197,7 +223,7 @@ mod tests {
         println!("result: {:?}", rows);
         assert_eq!(rows.len(), 1);
 
-        let result = rows[0].clone();
+        let _result = rows[0].clone();
         table.drop().await;
 
         // assert_eq!(result.get("id").unwrap(), &DBValue::Number(1.0));
@@ -262,5 +288,65 @@ mod tests {
         println!("result: {:?}", rows);
         assert_eq!(rows.len(), 2);
         // assert_eq!(result.get("id").unwrap(), &DBValue::Number(1.0));
+    }
+
+    #[tokio::test]
+    async fn test_serialization_comparison() {
+        let sample_data = HashMap::from([
+            ("id".to_string(), DBValue::Number(12345.0)),
+            (
+                "column1".to_string(),
+                DBValue::String("test_value_with_some_length".to_string()),
+            ),
+            (
+                "column2".to_string(),
+                DBValue::String("another_test_value".to_string()),
+            ),
+            ("date".to_string(), DBValue::Timestamp(1672531200)),
+            ("amount".to_string(), DBValue::Number(999.99)),
+        ]);
+
+        let iterations = 10000;
+
+        // Test JSON serialization
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            let json = serde_json::to_string(&sample_data).unwrap();
+            let _: HashMap<String, DBValue> = serde_json::from_str(&json).unwrap();
+        }
+        let json_duration = start.elapsed();
+
+        // Test bincode serialization
+        let config = bincode::config::standard();
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            let bytes = bincode::encode_to_vec(&sample_data, config).unwrap();
+            let (_decoded, _): (HashMap<String, DBValue>, usize) =
+                bincode::decode_from_slice(&bytes, config).unwrap();
+        }
+        let bincode_duration = start.elapsed();
+
+        println!("\n=== Serialization Performance Comparison ===");
+        println!("Iterations: {}", iterations);
+        println!(
+            "JSON:    {:?} ({:.2} µs/iter)",
+            json_duration,
+            json_duration.as_micros() as f64 / iterations as f64
+        );
+        println!(
+            "Bincode: {:?} ({:.2} µs/iter)",
+            bincode_duration,
+            bincode_duration.as_micros() as f64 / iterations as f64
+        );
+        println!(
+            "Speedup: {:.2}x faster",
+            json_duration.as_secs_f64() / bincode_duration.as_secs_f64()
+        );
+
+        // Verify bincode is faster
+        assert!(
+            bincode_duration < json_duration,
+            "Bincode should be faster than JSON"
+        );
     }
 }

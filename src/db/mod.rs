@@ -1,10 +1,11 @@
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 pub mod persistence;
 pub mod query_engine;
 pub mod row_schemaless;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum DBValue {
     String(String),
     Number(f64),
@@ -21,14 +22,14 @@ impl DBValue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Eq, PartialEq, Hash, Deserialize)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq, Hash, Deserialize, Encode, Decode)]
 pub enum DBValueType {
     String,
     Number,
     Timestamp,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum FilterEntity {
     Equals(Box<FilterEntity>, Box<FilterEntity>),
     GreaterThan(Box<FilterEntity>, Box<FilterEntity>),

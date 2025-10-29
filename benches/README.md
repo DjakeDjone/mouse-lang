@@ -40,8 +40,8 @@ The query engine demonstrates consistent performance across different query type
 - **Average Query Time**: ~111ms across all benchmark types
 
 **Key Observations:**
-1. AND conditions (range queries) are the most efficient, likely due to better index utilization
-2. Complex nested queries perform similarly to simple queries, showing good optimization
+1. AND conditions (range queries) are the most efficient
+2. Complex nested queries perform similarly to simple queries
 3. All queries complete in under 131ms, providing sub-second response times
 4. Some outliers detected in OR and timestamp queries suggest potential for further optimization
 
