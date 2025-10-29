@@ -1,3 +1,4 @@
+pub mod db;
 pub mod errors;
 pub mod interpreter;
 pub mod lexer;
@@ -62,7 +63,7 @@ async fn main() {
     // Tokenize
     let tokens = tokenize(code.to_string());
     debug_print(&debug, "\nTokens:");
-    let tokens_as_tokentype: Vec<_> = tokens.iter().map(|token| token.token.to_owned()).collect();
+    let _tokens_as_tokentype: Vec<_> = tokens.iter().map(|token| token.token.to_owned()).collect();
 
     // debug
     if debug {

@@ -1,5 +1,3 @@
-use chumsky::{container::Container, prelude::todo};
-
 use crate::{
     parser::{BinaryOp, Expr, Program, Stmt},
     std_lib,
@@ -13,39 +11,37 @@ pub struct Object {
 }
 
 impl Object {
-    pub fn new(name: &str, properties: HashMap<String, Value>) -> Self {
+    pub fn new(name: &str) -> Self {
+        Object {
+            name: name.to_string(),
+            properties: HashMap::new(),
+        }
+    }
+
+    pub fn with_properties(name: &str, properties: HashMap<String, Value>) -> Self {
         Object {
             name: name.to_string(),
             properties,
         }
     }
 
-    pub fn add_property(&mut self, key: String, value: Value) {
+    pub fn set_property(&mut self, key: String, value: Value) {
         self.properties.insert(key, value);
-    }
-
-    pub fn register_bind_fn(
-        &mut self,
-        name: &str,
-        func: fn(&mut Interpreter, Vec<Value>) -> Result<Value, String>,
-    ) {
-        self.properties.insert(
-            name.to_string(),
-            Value::BindFunction(name.to_string(), vec![], func),
-        );
     }
 
     pub fn get_property(&self, name: &str) -> Option<&Value> {
         self.properties.get(name)
     }
 
-    pub fn get_function(&self, name: &str) -> Option<(&Vec<String>, &Vec<Stmt>)> {
-        let function = self.get_property(name);
-        if let Some(Value::Function(_, ref params, ref body)) = function {
-            Some((params, body))
-        } else {
-            None
-        }
+    pub fn register_native_fn(
+        &mut self,
+        name: &str,
+        func: fn(&mut Interpreter, Vec<Value>) -> Result<Value, String>,
+    ) {
+        self.properties.insert(
+            name.to_string(),
+            Value::NativeFunction(name.to_string(), func),
+        );
     }
 }
 
@@ -71,12 +67,12 @@ pub enum Value {
     Void,
     Array(Vec<Value>),
     Function(String, Vec<String>, Vec<Stmt>), // name, params, body
-    BindFunction(
+    #[allow(unpredictable_function_pointer_comparisons)]
+    NativeFunction(
         String,
-        Vec<String>,
         fn(&mut Interpreter, Vec<Value>) -> Result<Value, String>,
     ),
-    Object(Object), // properties
+    Object(Object),
 }
 
 impl Value {
@@ -87,16 +83,10 @@ impl Value {
             Value::Void => false,
             Value::Array(arr) => !arr.is_empty(),
             Value::Function(_, _, _) => true,
-            Value::BindFunction(_, _, _) => true,
-            Value::Object(objct) => !objct.properties.is_empty(),
+            Value::NativeFunction(_, _) => true,
+            Value::Object(obj) => !obj.properties.is_empty(),
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ControlFlow {
-    None,
-    Return(Value),
 }
 
 impl std::fmt::Display for Value {
@@ -114,19 +104,20 @@ impl std::fmt::Display for Value {
                     .join(", ")
             ),
             Value::Function(name, _, _) => write!(f, "<function {}>", name),
-            Value::BindFunction(name, params, func) => {
-                write!(f, "<bound function {}({})>", name, params.join(", "))
-            }
-            Value::Object(objct) => write!(f, "{{{}}}", objct),
+            Value::NativeFunction(name, _) => write!(f, "<native function {}>", name),
+            Value::Object(obj) => write!(f, "{}", obj),
         }
     }
 }
 
-pub type NativeFn = fn(&mut Interpreter, Vec<Value>) -> Result<Value, String>;
+#[derive(Debug, Clone, PartialEq)]
+pub enum ControlFlow {
+    None,
+    Return(Value),
+}
 
 pub struct Environment {
     pub variables: HashMap<String, Value>,
-    pub functions: HashMap<String, (Vec<String>, Vec<Stmt>)>, // (params, body)
     pub objects: HashMap<String, Object>,
 }
 
@@ -134,73 +125,68 @@ impl Environment {
     pub fn new() -> Self {
         let mut env = Environment {
             variables: HashMap::new(),
-            functions: HashMap::new(),
             objects: HashMap::new(),
         };
 
-        // all functions are in the default object
+        // Create global object for global functions
         env.objects
-            .insert("".to_string(), Object::new("", HashMap::new()));
+            .insert("global".to_string(), Object::new("global"));
 
-        // Register native functions
-        env.register_native_functions();
-
-        env
-    }
-
-    pub fn create_sub_environment(&self) -> Environment {
-        let mut env = Environment::new();
-
-        // copy all functions and classes
-        env.functions = self.functions.clone();
-        env.objects = self.objects.clone();
-        // TODO: copy global variables
+        // Register standard library
+        env.register_std_lib();
 
         env
     }
 
-    fn register_native_functions(&mut self) {
-        // print
-        // self.native_functions
-        //     .insert("print".to_string(), std_lib::print::print);
-        // self.native_functions.insert(
-        //     "std::socketServer".to_string(),
-        //     std_lib::socket_server::socket_server,
-        // );
-        // self.native_functions
-        //     .insert("std::sleep".to_string(), std_lib::sleep::sleep);
-        // self.native_functions.insert(
-        //     "std::split_str".to_string(),
-        //     std_lib::str_utils::split_string,
-        // );
-        let mut std_object = Object::new("std", HashMap::new());
-        std_object.register_bind_fn("print", std_lib::print::print);
-        // std_object.register_method("socketServer", std_lib::socket_server::socket_server);
-        std_object.register_bind_fn("sleep", std_lib::sleep::sleep);
-        std_object.register_bind_fn("split_str", std_lib::str_utils::split_string);
+    fn register_std_lib(&mut self) {
+        // Register global print function
+        if let Some(global) = self.objects.get_mut("global") {
+            global.register_native_fn("print", std_lib::print::print);
+        }
+
+        // Register std library
+        let mut std_object = Object::new("std");
+        std_object.register_native_fn("print", std_lib::print::print);
+        std_object.register_native_fn("sleep", std_lib::sleep::sleep);
+        std_object.register_native_fn("split_str", std_lib::str_utils::split_string);
 
         self.objects.insert("std".to_string(), std_object);
     }
 
+    pub fn create_child(&self) -> Environment {
+        let env = Environment {
+            variables: HashMap::new(),
+            objects: self.objects.clone(),
+        };
+        env
+    }
+
     pub fn get_variable(&self, name: &str) -> Option<&Value> {
-        self.variables.get(name)
+        self.objects.get("global")?.get_property(name)
     }
 
     pub fn set_variable(&mut self, name: String, value: Value) {
-        self.variables.insert(name, value);
+        if let Some(global) = self.objects.get_mut("global") {
+            global.set_property(name.clone(), value);
+        }
     }
 
-    pub fn get_function(&self, name: &str) -> Option<(&Vec<String>, &Vec<Stmt>)> {
-        self.objects.get("").unwrap().get_function(name)
+    pub fn get_object(&self, name: &str) -> Option<&Object> {
+        self.objects.get(name)
     }
 
-    pub fn set_function(&mut self, name: String, params: Vec<String>, body: Vec<Stmt>) {
-        self.objects
-            .get("")
-            .expect("Default object not found")
-            .to_owned()
-            .add_property(name.clone(), Value::Function(name, params, body));
-        // self.functions.insert(name, (params, body));
+    pub fn get_object_mut(&mut self, name: &str) -> Option<&mut Object> {
+        self.objects.get_mut(name)
+    }
+
+    pub fn get_global_function(&self, name: &str) -> Option<&Value> {
+        self.objects.get("global")?.get_property(name)
+    }
+
+    pub fn set_global_function(&mut self, name: String, params: Vec<String>, body: Vec<Stmt>) {
+        if let Some(global) = self.objects.get_mut("global") {
+            global.set_property(name.clone(), Value::Function(name, params, body));
+        }
     }
 }
 
@@ -215,9 +201,9 @@ impl Interpreter {
         }
     }
 
-    pub fn create_sub_interpreter(&self) -> Interpreter {
+    pub fn create_child(&self) -> Interpreter {
         Interpreter {
-            env: self.env.create_sub_environment(),
+            env: self.env.create_child(),
         }
     }
 
@@ -225,8 +211,8 @@ impl Interpreter {
         for stmt in &program.statements {
             match self.execute_statement(stmt)? {
                 ControlFlow::None => continue,
-                ControlFlow::Return(_value) => {
-                    // TODO: handle (throw error?), for now it's ok
+                ControlFlow::Return(_) => {
+                    // Top-level return, we can ignore or handle as needed
                     continue;
                 }
             }
@@ -242,7 +228,6 @@ impl Interpreter {
                 Ok(ControlFlow::None)
             }
             Stmt::Assign { name, value } => {
-                // Check if variable exists
                 if self.env.get_variable(name).is_none() {
                     return Err(format!("Cannot assign to undefined variable: {}", name));
                 }
@@ -252,61 +237,52 @@ impl Interpreter {
             }
             Stmt::Function { name, params, body } => {
                 self.env
-                    .set_function(name.clone(), params.clone(), body.clone());
+                    .set_global_function(name.clone(), params.clone(), body.clone());
                 Ok(ControlFlow::None)
             }
             Stmt::Return(expr) => {
                 let val = self.evaluate_expression(expr)?;
                 Ok(ControlFlow::Return(val))
             }
-            // Stmt::Print(expr) => {
-            //     let val = self.evaluate_expression(expr)?;
-            //     println!("{}", val);
-            //     Ok(ControlFlow::None)
-            // }
             Stmt::If {
                 condition,
                 then_branch,
-                else_branch: _,
+                else_branch,
             } => {
                 let condition_value = self.evaluate_expression(condition)?;
 
                 if condition_value.to_bool() {
-                    for stmt in then_branch {
-                        match self.execute_statement(stmt)? {
-                            ControlFlow::Return(value) => {
-                                return Ok(ControlFlow::Return(value));
-                            }
-                            ControlFlow::None => continue,
-                        }
-                    }
+                    self.execute_block(then_branch)
+                } else if let Some(else_body) = else_branch {
+                    self.execute_block(else_body)
+                } else {
+                    Ok(ControlFlow::None)
                 }
-                Ok(ControlFlow::None)
             }
             Stmt::While { condition, body } => {
-                loop {
-                    let condition_value = self.evaluate_expression(condition)?;
-
-                    if !condition_value.to_bool() {
-                        break;
-                    }
-
-                    for stmt in body {
-                        match self.execute_statement(stmt)? {
-                            ControlFlow::Return(value) => {
-                                return Ok(ControlFlow::Return(value));
-                            }
-                            ControlFlow::None => continue,
-                        }
+                while self.evaluate_expression(condition)?.to_bool() {
+                    match self.execute_block(body)? {
+                        ControlFlow::Return(value) => return Ok(ControlFlow::Return(value)),
+                        ControlFlow::None => continue,
                     }
                 }
                 Ok(ControlFlow::None)
             }
             Stmt::Expression(expr) => {
-                let _val = self.evaluate_expression(expr)?;
+                self.evaluate_expression(expr)?;
                 Ok(ControlFlow::None)
             }
         }
+    }
+
+    fn execute_block(&mut self, statements: &[Stmt]) -> Result<ControlFlow, String> {
+        for stmt in statements {
+            match self.execute_statement(stmt)? {
+                ControlFlow::Return(value) => return Ok(ControlFlow::Return(value)),
+                ControlFlow::None => continue,
+            }
+        }
+        Ok(ControlFlow::None)
     }
 
     fn evaluate_expression(&mut self, expr: &Expr) -> Result<Value, String> {
@@ -314,142 +290,280 @@ impl Interpreter {
             Expr::Number(n) => Ok(Value::Number(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
             Expr::Identifier(name) => {
-                // Check if it's a function that can be used as a value
-                if let Some((params, body)) = self.env.get_function(name) {
-                    Ok(Value::Function(name.clone(), params.clone(), body.clone()))
-                } else {
-                    self.env
-                        .get_variable(name)
-                        .cloned()
-                        .ok_or_else(|| format!("Undefined variable: {}", name))
+                // First check variables
+                if let Some(value) = self.env.get_variable(name) {
+                    return Ok(value.clone());
                 }
-            }
-            Expr::Binary { left, op, right } => {
-                let left_val = self.evaluate_expression(left)?;
-                let right_val = self.evaluate_expression(right)?;
 
-                match (left_val, right_val) {
-                    (Value::Number(l), Value::Number(r)) => {
-                        let result = match op {
-                            BinaryOp::Add => l + r,
-                            BinaryOp::Subtract => l - r,
-                            BinaryOp::Multiply => l * r,
-                            BinaryOp::Divide => {
-                                if r == 0 {
-                                    return Err("Division by zero".to_string());
-                                }
-                                l / r
-                            }
-                            BinaryOp::Equal => {
-                                if l == r {
-                                    1
-                                } else {
-                                    0
-                                }
-                            }
-                            BinaryOp::NotEqual => {
-                                if l != r {
-                                    1
-                                } else {
-                                    0
-                                }
-                            }
-                            BinaryOp::LessThan => {
-                                if l < r {
-                                    1
-                                } else {
-                                    0
-                                }
-                            }
-                            BinaryOp::LessThanOrEqual => {
-                                if l <= r {
-                                    1
-                                } else {
-                                    0
-                                }
-                            }
-                            BinaryOp::GreaterThan => {
-                                if l > r {
-                                    1
-                                } else {
-                                    0
-                                }
-                            }
-                            BinaryOp::GreaterThanOrEqual => {
-                                if l >= r {
-                                    1
-                                } else {
-                                    0
-                                }
-                            }
-                        };
-                        Ok(Value::Number(result))
-                    }
-                    (Value::String(l), Value::String(r)) => match op {
-                        BinaryOp::Add => Ok(Value::String(format!("{}{}", l, r))),
-                        _ => Err(format!("Unsupported operation {:?} for strings", op)),
-                    },
-                    // everything can be added to string
-                    (Value::String(l), r) => match op {
-                        BinaryOp::Add => Ok(Value::String(format!("{}{}", l, r))),
-                        _ => Err(format!("Unsupported operation {:?} for strings", op)),
-                    },
-                    _ => Err("Type mismatch in binary operation".to_string()),
+                // Then check global functions
+                if let Some(func) = self.env.get_global_function(name) {
+                    return Ok(func.clone());
                 }
+
+                // Finally check if it's an object
+                if let Some(obj) = self.env.get_object(name) {
+                    return Ok(Value::Object(obj.clone()));
+                }
+
+                Err(format!("Undefined identifier: {}", name))
+            }
+            Expr::Binary { left, op, right } => self.evaluate_binary_op(left, op, right),
+            Expr::FunctionCall { name, args } => self.evaluate_function_call(name, args),
+            Expr::ObjectCall(object_name, member_expr) => {
+                self.evaluate_object_call(object_name, member_expr)
+            }
+        }
+    }
+
+    fn evaluate_binary_op(
+        &mut self,
+        left: &Expr,
+        op: &BinaryOp,
+        right: &Expr,
+    ) -> Result<Value, String> {
+        let left_val = self.evaluate_expression(left)?;
+        let right_val = self.evaluate_expression(right)?;
+
+        match (left_val, right_val) {
+            (Value::Number(l), Value::Number(r)) => {
+                let result = match op {
+                    BinaryOp::Add => l + r,
+                    BinaryOp::Subtract => l - r,
+                    BinaryOp::Multiply => l * r,
+                    BinaryOp::Divide => {
+                        if r == 0 {
+                            return Err("Division by zero".to_string());
+                        }
+                        l / r
+                    }
+                    BinaryOp::Equal => {
+                        if l == r {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    BinaryOp::NotEqual => {
+                        if l != r {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    BinaryOp::LessThan => {
+                        if l < r {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    BinaryOp::LessThanOrEqual => {
+                        if l <= r {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    BinaryOp::GreaterThan => {
+                        if l > r {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    BinaryOp::GreaterThanOrEqual => {
+                        if l >= r {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                };
+                Ok(Value::Number(result))
+            }
+            (Value::String(l), Value::String(r)) => match op {
+                BinaryOp::Add => Ok(Value::String(format!("{}{}", l, r))),
+                BinaryOp::Equal => Ok(Value::Number(if l == r { 1 } else { 0 })),
+                BinaryOp::NotEqual => Ok(Value::Number(if l != r { 1 } else { 0 })),
+                _ => Err(format!("Unsupported operation {:?} for strings", op)),
+            },
+            (Value::String(l), r) => match op {
+                BinaryOp::Add => Ok(Value::String(format!("{}{}", l, r))),
+                _ => Err(format!(
+                    "Unsupported operation {:?} for string and {}",
+                    op, r
+                )),
+            },
+            (l, Value::String(r)) => match op {
+                BinaryOp::Add => Ok(Value::String(format!("{}{}", l, r))),
+                _ => Err(format!(
+                    "Unsupported operation {:?} for {} and string",
+                    op, l
+                )),
+            },
+            _ => Err("Type mismatch in binary operation".to_string()),
+        }
+    }
+
+    fn evaluate_function_call(&mut self, name: &str, args: &[Expr]) -> Result<Value, String> {
+        // Evaluate arguments
+        let mut arg_values = Vec::new();
+        for arg in args {
+            arg_values.push(self.evaluate_expression(arg)?);
+        }
+
+        // Check for global functions
+        if let Some(func) = self.env.get_global_function(name).cloned() {
+            match func {
+                Value::Function(_, params, body) => {
+                    self.call_user_function(&params, &body, arg_values)
+                }
+                Value::NativeFunction(_, native_fn) => native_fn(self, arg_values),
+                _ => Err(format!("{} is not a function", name)),
+            }
+        } else {
+            Err(format!("Undefined function: {}", name))
+        }
+    }
+
+    fn evaluate_object_call(
+        &mut self,
+        object_name: &str,
+        member_expr: &Expr,
+    ) -> Result<Value, String> {
+        // Get the object
+        let object = self
+            .env
+            .get_object(object_name)
+            .ok_or_else(|| format!("Undefined object: {}", object_name))?
+            .clone();
+
+        // Handle the member expression
+        match member_expr {
+            Expr::Identifier(prop_name) => {
+                // Simple property access: obj.prop
+                object.get_property(prop_name).cloned().ok_or_else(|| {
+                    format!(
+                        "Property '{}' not found on object '{}'",
+                        prop_name, object_name
+                    )
+                })
             }
             Expr::FunctionCall { name, args } => {
+                // Method call: obj.method(args)
+                let method = object.get_property(name).ok_or_else(|| {
+                    format!("Method '{}' not found on object '{}'", name, object_name)
+                })?;
+
+                // Evaluate arguments
                 let mut arg_values = Vec::new();
                 for arg in args {
                     arg_values.push(self.evaluate_expression(arg)?);
                 }
 
-                // Check for native functions first
-                // if let Some(native_fn) = self.env.get_native_function(name).cloned() {
-                //     return native_fn(self, arg_values);
-                // }
-
-                // Check for user-defined functions
-                if let Some((params, body)) = self.env.get_function(name) {
-                    if params.len() != arg_values.len() {
-                        return Err(format!(
-                            "Function {} expects {} arguments, got {}",
-                            name,
-                            params.len(),
-                            arg_values.len()
-                        ));
+                // Call the method
+                match method.clone() {
+                    Value::Function(_, params, body) => {
+                        self.call_user_function(&params, &body, arg_values)
                     }
-
-                    // new interpreter for the function call with fresh variables)
-                    let mut func_interpreter = Interpreter::new();
-                    func_interpreter.env = self.env.create_sub_environment();
-
-                    // Set function parameters in the new interpreter
-                    for (param, value) in params.iter().zip(arg_values.iter()) {
-                        func_interpreter
-                            .env
-                            .set_variable(param.clone(), value.clone());
-                    }
-
-                    // Execute the function body
-                    for stmt in body {
-                        match func_interpreter.execute_statement(stmt)? {
-                            ControlFlow::Return(value) => {
-                                return Ok(value);
-                            }
-                            ControlFlow::None => continue,
-                        }
-                    }
-
-                    Ok(Value::Void)
-                } else {
-                    Err(format!("Undefined function: {}", name))
+                    Value::NativeFunction(_, native_fn) => native_fn(self, arg_values),
+                    _ => Err(format!(
+                        "'{}' is not a method on object '{}'",
+                        name, object_name
+                    )),
                 }
             }
-            Expr::ObjectCall(name, object_member) => {
-                // TODO
-                todo!()
+            Expr::ObjectCall(nested_obj, nested_member) => {
+                // Nested object call: obj.nested.member
+                // First get the nested object from the parent
+                let nested_value = object.get_property(nested_obj).ok_or_else(|| {
+                    format!(
+                        "Property '{}' not found on object '{}'",
+                        nested_obj, object_name
+                    )
+                })?;
+
+                match nested_value {
+                    Value::Object(nested_object) => {
+                        // Recursively evaluate the nested member
+                        self.evaluate_nested_object_call(nested_object, nested_member)
+                    }
+                    _ => Err(format!(
+                        "'{}' is not an object on '{}'",
+                        nested_obj, object_name
+                    )),
+                }
+            }
+            _ => Err(format!("Invalid member access on object '{}'", object_name)),
+        }
+    }
+
+    fn evaluate_nested_object_call(
+        &mut self,
+        object: &Object,
+        member_expr: &Expr,
+    ) -> Result<Value, String> {
+        match member_expr {
+            Expr::Identifier(prop_name) => object
+                .get_property(prop_name)
+                .cloned()
+                .ok_or_else(|| format!("Property '{}' not found on object", prop_name)),
+            Expr::FunctionCall { name, args } => {
+                let method = object
+                    .get_property(name)
+                    .cloned()
+                    .ok_or_else(|| format!("Method '{}' not found on object", name))?;
+
+                let mut arg_values = Vec::new();
+                for arg in args {
+                    arg_values.push(self.evaluate_expression(arg)?);
+                }
+
+                match method {
+                    Value::Function(_, params, body) => {
+                        self.call_user_function(&params, &body, arg_values)
+                    }
+                    Value::NativeFunction(_, native_fn) => native_fn(self, arg_values),
+                    _ => Err(format!("'{}' is not a method", name)),
+                }
+            }
+            _ => Err("Invalid nested member access".to_string()),
+        }
+    }
+
+    fn call_user_function(
+        &mut self,
+        params: &[String],
+        body: &[Stmt],
+        arg_values: Vec<Value>,
+    ) -> Result<Value, String> {
+        if params.len() != arg_values.len() {
+            return Err(format!(
+                "Function expects {} arguments, got {}",
+                params.len(),
+                arg_values.len()
+            ));
+        }
+
+        // Create new interpreter scope for function
+        let mut func_interpreter = self.create_child();
+
+        // Set parameters as local variables
+        for (param, value) in params.iter().zip(arg_values.iter()) {
+            func_interpreter
+                .env
+                .set_variable(param.clone(), value.clone());
+        }
+
+        // Execute function body
+        for stmt in body {
+            match func_interpreter.execute_statement(stmt)? {
+                ControlFlow::Return(value) => return Ok(value),
+                ControlFlow::None => continue,
             }
         }
+
+        Ok(Value::Void)
     }
 }
 
