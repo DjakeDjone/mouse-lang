@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::db::{DBValue, DBValueType, FilterEntity};
+use strsim;
 
 pub struct PreSelectedField {
     pub name: String,
@@ -37,6 +38,36 @@ fn evaluate_filter(filter: &FilterEntity, fields: &HashMap<String, DBValue>) -> 
                 evaluate_to_value(right, fields),
             ) {
                 (Some(l), Some(r)) => values_equal(&l, &r),
+                _ => false,
+            }
+        }
+        FilterEntity::GreaterThan(left, right) => {
+            match (
+                evaluate_to_value(left, fields),
+                evaluate_to_value(right, fields),
+            ) {
+                (Some(DBValue::Number(l)), Some(DBValue::Number(r))) => l > r,
+                _ => false,
+            }
+        }
+        FilterEntity::LessThan(left, right) => {
+            match (
+                evaluate_to_value(left, fields),
+                evaluate_to_value(right, fields),
+            ) {
+                (Some(DBValue::Number(l)), Some(DBValue::Number(r))) => l < r,
+                _ => false,
+            }
+        }
+        FilterEntity::FuzzyMatch(left, right, threshold) => {
+            match (
+                evaluate_to_value(left, fields),
+                evaluate_to_value(right, fields),
+            ) {
+                (Some(DBValue::String(l)), Some(DBValue::String(r))) => {
+                    let distance = strsim::levenshtein(&l, &r);
+                    distance <= *threshold as usize
+                }
                 _ => false,
             }
         }

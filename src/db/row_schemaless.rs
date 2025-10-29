@@ -4,7 +4,7 @@ use crate::db::query_engine::PreSelectedField;
 use crate::db::{query_engine, DBValue, DBValueType, FilterEntity};
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{BufReader, Write};
 use std::iter::Map;
 
 pub struct Settings {
@@ -89,6 +89,31 @@ impl TableRowSchemaless {
             }
         }
         result
+    }
+
+    /// returns false if file not exists
+    pub async fn is_empty(&self) -> bool {
+        let file = OpenOptions::new()
+            .read(true)
+            .open(format!("{}/{}", self.settings.base_path, self.primary_key));
+
+        match file {
+            Ok(f) => {
+                use std::io::BufRead;
+                let mut reader = BufReader::new(f);
+                reader.fill_buf().map(|buf| buf.is_empty()).unwrap_or(true)
+            }
+            Err(_) => true, // If file doesn't exist, consider it empty
+        }
+    }
+
+    pub async fn size(&self) -> usize {
+        let file = OpenOptions::new()
+            .read(true)
+            .open(format!("{}/{}", self.settings.base_path, self.primary_key))
+            .unwrap();
+        let reader = BufReader::new(file);
+        reader.buffer().iter().size_hint().0
     }
 }
 
@@ -175,6 +200,67 @@ mod tests {
         let result = rows[0].clone();
         table.drop().await;
 
+        // assert_eq!(result.get("id").unwrap(), &DBValue::Number(1.0));
+    }
+
+    async fn insert_test_data_if_not_exists(table: &mut TableRowSchemaless) {
+        if table.is_empty().await {
+            for i in 0..1000000 {
+                table
+                    .insert(HashMap::from([
+                        ("id".to_string(), DBValue::Number(i as f64)),
+                        (
+                            "column1".to_string(),
+                            DBValue::String(format!("value{}", i)),
+                        ),
+                        (
+                            "column2".to_string(),
+                            DBValue::String(format!("value{}- {}", i, i)),
+                        ),
+                        (
+                            "date".to_string(),
+                            DBValue::Timestamp(1672531200 + i * 86400),
+                        ),
+                        ("amount".to_string(), DBValue::Number((i * 2) as f64)),
+                    ]))
+                    .await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_query_performance() {
+        let mut table = TableRowSchemaless::new(
+            "id".to_string(),
+            Settings {
+                base_path: "test_db/test_performance".to_string(),
+            },
+        )
+        .await;
+
+        insert_test_data_if_not_exists(&mut table).await;
+
+        let query = FilterEntity::Or(
+            Box::new(FilterEntity::Or(
+                Box::new(FilterEntity::Equals(
+                    Box::new(FilterEntity::Column("column1".to_string())),
+                    Box::new(FilterEntity::Value(DBValue::String(
+                        "value5000".to_string(),
+                    ))),
+                )),
+                Box::new(FilterEntity::Equals(
+                    Box::new(FilterEntity::Column("amount".to_string())),
+                    Box::new(FilterEntity::Value(DBValue::Number(2.0))),
+                )),
+            )),
+            Box::new(FilterEntity::Equals(
+                Box::new(FilterEntity::Column("column2".to_string())),
+                Box::new(FilterEntity::Value(DBValue::String("value2".to_string()))),
+            )),
+        );
+        let rows = table.query(query).await;
+        println!("result: {:?}", rows);
+        assert_eq!(rows.len(), 2);
         // assert_eq!(result.get("id").unwrap(), &DBValue::Number(1.0));
     }
 }

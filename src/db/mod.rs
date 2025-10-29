@@ -31,6 +31,10 @@ pub enum DBValueType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FilterEntity {
     Equals(Box<FilterEntity>, Box<FilterEntity>),
+    GreaterThan(Box<FilterEntity>, Box<FilterEntity>),
+    LessThan(Box<FilterEntity>, Box<FilterEntity>),
+    FuzzyMatch(Box<FilterEntity>, Box<FilterEntity>, u8), // Fuzzy match threshold
+
     Not(Box<FilterEntity>),
     And(Box<FilterEntity>, Box<FilterEntity>),
     Or(Box<FilterEntity>, Box<FilterEntity>),
