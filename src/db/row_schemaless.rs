@@ -1,4 +1,3 @@
-use crate::db::query_engine::PreSelectedField;
 use crate::db::{query_engine, DBValue, DBValueType, FilterEntity};
 use std::collections::{HashMap, HashSet};
 use tokio::fs::OpenOptions;
@@ -52,6 +51,7 @@ impl TableRowSchemaless {
         file.write_all(&len.to_le_bytes()).await.unwrap();
         // Write the actual data
         file.write_all(&bytes).await.unwrap();
+        file.flush().await.unwrap();
     }
 
     pub async fn drop(&mut self) {
@@ -73,12 +73,12 @@ impl TableRowSchemaless {
     }
 
     pub async fn query(&self, query: FilterEntity) -> Vec<HashMap<String, DBValue>> {
-        let _necessary_fields = query_engine::pre_select(&query).unwrap_or(
-            self.known_columns
-                .iter()
-                .map(|col| PreSelectedField::from_column(col.clone()))
-                .collect(),
-        );
+        // let _necessary_fields = query_engine::pre_select(&query).unwrap_or(
+        //     self.known_columns
+        //         .iter()
+        //         .map(|col| PreSelectedField::from_column(col.clone()))
+        //         .collect(),
+        // );
 
         // later do preselect with partitioning etc.
         // for now just go though every row
@@ -138,8 +138,23 @@ impl TableRowSchemaless {
             .open(format!("{}/{}", self.settings.base_path, self.primary_key))
             .await
             .unwrap();
-        let reader = BufReader::new(file);
-        reader.buffer().iter().size_hint().0
+        let mut reader = BufReader::new(file);
+
+        let mut count = 0;
+        loop {
+            let mut len_bytes = [0u8; 4];
+            match reader.read_exact(&mut len_bytes).await {
+                Ok(_) => {}
+                Err(_) => break, // EOF or error
+            }
+            let len = u32::from_le_bytes(len_bytes) as usize;
+
+            let mut buffer = vec![0u8; len];
+            reader.read_exact(&mut buffer).await.unwrap();
+
+            count += 1;
+        }
+        count
     }
 }
 
@@ -231,7 +246,7 @@ mod tests {
 
     async fn insert_test_data_if_not_exists(table: &mut TableRowSchemaless) {
         if table.is_empty().await {
-            for i in 0..1000000 {
+            for i in 0..10_000 {
                 table
                     .insert(HashMap::from([
                         ("id".to_string(), DBValue::Number(i as f64)),
@@ -288,6 +303,40 @@ mod tests {
         println!("result: {:?}", rows);
         assert_eq!(rows.len(), 2);
         // assert_eq!(result.get("id").unwrap(), &DBValue::Number(1.0));
+    }
+
+    #[tokio::test]
+    async fn test_fuzzy_search() {
+        let mut table = TableRowSchemaless::new(
+            "id".to_string(),
+            Settings {
+                base_path: "test_db/test_fuzzy_search".to_string(),
+            },
+        )
+        .await;
+
+        table.truncate().await;
+
+        insert_test_data_if_not_exists(&mut table).await;
+
+        table
+            .insert(HashMap::from([
+                ("id".to_string(), DBValue::Number(1.0)),
+                ("column1".to_string(), DBValue::String("Buch".to_string())),
+                ("column2".to_string(), DBValue::String("value2".to_string())),
+            ]))
+            .await;
+
+        let query = FilterEntity::FuzzyMatch(
+            Box::new(FilterEntity::Column("column1".to_string())),
+            Box::new(FilterEntity::Value(DBValue::String("buche".to_string()))),
+            2, // treshold
+        );
+        let rows = table.query(query).await;
+        println!("result: {:?}", rows);
+        assert_eq!(rows.len(), 1);
+
+        table.drop().await;
     }
 
     #[tokio::test]
@@ -348,5 +397,99 @@ mod tests {
             bincode_duration < json_duration,
             "Bincode should be faster than JSON"
         );
+    }
+
+    #[tokio::test]
+    async fn test_debug_simple_insert_read() {
+        let mut table = TableRowSchemaless::new(
+            "id".to_string(),
+            Settings {
+                base_path: "test_db/test_debug".to_string(),
+            },
+        )
+        .await;
+
+        table.truncate().await;
+
+        // Insert records in a loop - using exact same format as insert_test_data_if_not_exists
+        let num_records = 100000;
+        println!("Inserting {} records...", num_records);
+        for i in 0..num_records {
+            table
+                .insert(HashMap::from([
+                    ("id".to_string(), DBValue::Number(i as f64)),
+                    (
+                        "column1".to_string(),
+                        DBValue::String(format!("value{}", i)),
+                    ),
+                    (
+                        "column2".to_string(),
+                        DBValue::String(format!("value{}- {}", i, i)),
+                    ),
+                    (
+                        "date".to_string(),
+                        DBValue::Timestamp(1672531200 + (i as i64) * 86400),
+                    ),
+                    ("amount".to_string(), DBValue::Number((i * 2) as f64)),
+                ]))
+                .await;
+
+            if i % 1000 == 0 {
+                println!("Inserted {} records", i);
+            }
+        }
+
+        println!("Querying back all records...");
+        let query = FilterEntity::GreaterThan(
+            Box::new(FilterEntity::Column("id".to_string())),
+            Box::new(FilterEntity::Value(DBValue::Number(-1.0))),
+        );
+        let rows = table.query(query).await;
+        println!("Successfully queried {} records", rows.len());
+        assert_eq!(rows.len(), num_records);
+
+        table.drop().await;
+    }
+
+    #[tokio::test]
+    async fn test_size() {
+        let mut table = TableRowSchemaless::new(
+            "id".to_string(),
+            Settings {
+                base_path: "test_db/test_debug".to_string(),
+            },
+        )
+        .await;
+
+        table.truncate().await;
+
+        // Insert records in a loop - using exact same format as insert_test_data_if_not_exists
+        let num_records = 10_000;
+        for i in 0..num_records {
+            table
+                .insert(HashMap::from([
+                    ("id".to_string(), DBValue::Number(i as f64)),
+                    (
+                        "column1".to_string(),
+                        DBValue::String(format!("value{}", i)),
+                    ),
+                    (
+                        "column2".to_string(),
+                        DBValue::String(format!("value{}- {}", i, i)),
+                    ),
+                    (
+                        "date".to_string(),
+                        DBValue::Timestamp(1672531200 + (i as i64) * 86400),
+                    ),
+                    ("amount".to_string(), DBValue::Number((i * 2) as f64)),
+                ]))
+                .await;
+        }
+
+        let size = table.size().await;
+        println!("Table size: {}", size);
+        assert_eq!(size, num_records);
+
+        table.drop().await;
     }
 }

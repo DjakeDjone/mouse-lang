@@ -1,7 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use mouse_lang::db::row_schemaless::{Settings, TableRowSchemaless};
 use mouse_lang::db::{DBValue, FilterEntity};
 use std::collections::HashMap;
+use std::hint::black_box;
 
 async fn setup_test_table() -> TableRowSchemaless {
     let mut table = TableRowSchemaless::new(

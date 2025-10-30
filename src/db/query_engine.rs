@@ -20,7 +20,119 @@ impl PreSelectedField {
 }
 
 pub fn pre_select(query: &FilterEntity) -> Option<Vec<PreSelectedField>> {
-    None
+    let mut columns: HashMap<String, PreSelectedField> = HashMap::new();
+
+    collect_columns(query, &mut columns);
+
+    if columns.is_empty() {
+        None
+    } else {
+        Some(columns.into_values().collect())
+    }
+}
+
+/// Recursively collect all columns from a filter entity
+fn collect_columns(filter: &FilterEntity, columns: &mut HashMap<String, PreSelectedField>) {
+    match filter {
+        FilterEntity::Column(name) => {
+            // Add column if not already present
+            columns
+                .entry(name.clone())
+                .or_insert_with(|| PreSelectedField {
+                    name: name.clone(),
+                    kind: DBValueType::String, // Default type
+                    range: None,
+                });
+        }
+        FilterEntity::Equals(left, right) => {
+            // Try to infer type from value comparisons
+            infer_from_comparison(left, right, columns);
+            collect_columns(left, columns);
+            collect_columns(right, columns);
+        }
+        FilterEntity::GreaterThan(left, right) | FilterEntity::LessThan(left, right) => {
+            // Numeric comparisons - infer Number type
+            infer_numeric_type(left, columns);
+            infer_numeric_type(right, columns);
+            collect_columns(left, columns);
+            collect_columns(right, columns);
+        }
+        FilterEntity::FuzzyMatch(left, right, _) => {
+            // String comparisons - infer String type
+            infer_string_type(left, columns);
+            infer_string_type(right, columns);
+            collect_columns(left, columns);
+            collect_columns(right, columns);
+        }
+        FilterEntity::Not(inner) => {
+            collect_columns(inner, columns);
+        }
+        FilterEntity::And(left, right)
+        | FilterEntity::Or(left, right)
+        | FilterEntity::Xor(left, right) => {
+            collect_columns(left, columns);
+            collect_columns(right, columns);
+        }
+        FilterEntity::Value(_) => {
+            // Values don't contribute columns
+        }
+    }
+}
+
+/// Infer column type from comparison with a value
+pub fn infer_from_comparison(
+    left: &FilterEntity,
+    right: &FilterEntity,
+    columns: &mut HashMap<String, PreSelectedField>,
+) {
+    match (left, right) {
+        (FilterEntity::Column(name), FilterEntity::Value(val))
+        | (FilterEntity::Value(val), FilterEntity::Column(name)) => {
+            columns
+                .entry(name.clone())
+                .and_modify(|field| {
+                    field.kind = val.vtype();
+                })
+                .or_insert_with(|| PreSelectedField {
+                    name: name.clone(),
+                    kind: val.vtype(),
+                    range: None,
+                });
+        }
+        _ => {}
+    }
+}
+
+/// Infer that a column is numeric type
+pub fn infer_numeric_type(filter: &FilterEntity, columns: &mut HashMap<String, PreSelectedField>) {
+    if let FilterEntity::Column(name) = filter {
+        columns
+            .entry(name.clone())
+            .and_modify(|field| {
+                field.kind = DBValueType::Number;
+            })
+            .or_insert_with(|| PreSelectedField {
+                name: name.clone(),
+                kind: DBValueType::Number,
+                range: None,
+            });
+    }
+}
+
+/// Infer that a column is string type
+pub fn infer_string_type(filter: &FilterEntity, columns: &mut HashMap<String, PreSelectedField>) {
+    if let FilterEntity::Column(name) = filter {
+        columns
+            .entry(name.clone())
+            .and_modify(|field| {
+                field.kind = DBValueType::String;
+            })
+            .or_insert_with(|| PreSelectedField {
+                name: name.clone(),
+                kind: DBValueType::String,
+                range: None,
+            });
+    }
 }
 
 /// Execute a query on a set of fields
