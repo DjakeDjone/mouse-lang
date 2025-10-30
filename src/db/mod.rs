@@ -1,15 +1,15 @@
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-pub mod persistence;
 pub mod query_engine;
 pub mod row_schemaless;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Encode, Decode)]
 pub enum DBValue {
     String(String),
     Number(f64),
     Timestamp(i64),
+    Null,
 }
 
 impl DBValue {
@@ -18,6 +18,7 @@ impl DBValue {
             DBValue::String(_) => DBValueType::String,
             DBValue::Number(_) => DBValueType::Number,
             DBValue::Timestamp(_) => DBValueType::Timestamp,
+            DBValue::Null => DBValueType::Null,
         }
     }
 }
@@ -27,6 +28,7 @@ pub enum DBValueType {
     String,
     Number,
     Timestamp,
+    Null,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -43,14 +45,5 @@ pub enum FilterEntity {
 
     Value(DBValue),
     Column(String),
+    Null,
 }
-
-pub struct DBSettings {
-    url: &'static str,
-    cache_size: u32,
-}
-
-const DB_SETTINGS: DBSettings = DBSettings {
-    url: "./mouse-src/data/database.db",
-    cache_size: 100,
-};

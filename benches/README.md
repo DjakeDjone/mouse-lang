@@ -21,31 +21,47 @@ cargo bench -- --sample-size 50
 
 ### Benchmark Results
 
-#### Latest Results (100,000 rows)
+#### Indexed vs Non-Indexed Performance (100,000 rows)
 
-| Benchmark | Mean Time | Range | Notes |
-|-----------|-----------|-------|-------|
-| query_simple_equals | 112.71 ms | 111.17 - 114.23 ms | Simple equality query on indexed column |
-| query_or_multiple_conditions | 128.84 ms | 127.60 - 130.16 ms | OR conditions across multiple columns |
-| query_and_conditions | 97.44 ms | 96.06 - 98.79 ms | Range query with AND conditions |
-| query_timestamp_range | 101.24 ms | 100.48 - 102.01 ms | Timestamp range filtering |
-| query_complex_nested | 114.99 ms | 113.52 - 116.46 ms | Nested AND/OR with multiple conditions |
+| Query Type | No Index | With Index | Speedup | Performance |
+|------------|----------|------------|---------|-------------|
+| **Simple Equals** | 75.35 ms | 17.46 ms | **4.3x faster** | ✅ Significant improvement |
+| **OR Multiple Conditions** | 92.59 ms | 90.70 ms | 1.02x faster | ⚠️ Minimal improvement |
+| **AND Conditions (Range)** | 74.70 ms | 74.66 ms | ~1.0x | ❌ No improvement |
+| **Timestamp Range** | 74.35 ms | 74.24 ms | ~1.0x | ❌ No improvement |
+| **Complex Nested** | 86.80 ms | 88.54 ms | **0.98x** | ❌ Actually slower |
 
 #### Summary
 
-The query engine demonstrates consistent performance across different query types on a dataset of 100,000 rows:
+**Index Performance Analysis:**
 
-- **Fastest Query**: AND conditions (range queries) at ~97ms
-- **Slowest Query**: OR with multiple conditions at ~129ms
-- **Average Query Time**: ~111ms across all benchmark types
+**✅ What Works:**
+- **Simple equality queries** see massive **4.3x speedup** (75ms → 17ms)
+- Indexes are clearly effective for `Equals` operations on indexed columns
 
-**Key Observations:**
-1. AND conditions (range queries) are the most efficient
-2. Complex nested queries perform similarly to simple queries
-3. All queries complete in under 131ms, providing sub-second response times
-4. Some outliers detected in OR and timestamp queries suggest potential for further optimization
+**⚠️ What Needs Improvement:**
+1. **Range queries** (GreaterThan/LessThan with AND) show **zero improvement**
+   - Suggests indexes aren't being utilized for range operations
+   - Both `query_and_conditions` and `query_timestamp_range` demonstrate this pattern
+   - Consider implementing B-tree indexes for better range query support
 
-*Note: The ~90% improvement shown by Criterion for some queries is from comparing against a previous run with a different dataset size, not from actual optimizations.*
+2. **OR conditions** show **minimal improvement** (~2%)
+   - Multiple index lookups with union operations may have high overhead
+   - Current index architecture may not be optimal for OR queries
+
+3. **Complex nested queries** are **actually slower with indexes** (2% regression)
+   - Index lookup overhead outweighs benefits for complex query patterns
+   - Query planner should consider skipping indexes for these cases
+
+**Recommendations:**
+1. Implement B-tree or sorted indexes to support efficient range queries
+2. Add query planning logic to decide when to use indexes based on query type
+3. Consider index-only scans for simple equality queries
+4. Profile OR query execution to understand overhead sources
+
+**Current Best Practice:**
+- **Use indexes for:** Simple `Equals` queries ✅
+- **Skip indexes for:** Range queries, complex nested queries (currently no benefit)
 
 **Test Configuration:**
 - Dataset: 100,000 rows with 5 columns (id, column1, column2, date, amount)

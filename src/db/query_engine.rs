@@ -76,6 +76,9 @@ fn collect_columns(filter: &FilterEntity, columns: &mut HashMap<String, PreSelec
         FilterEntity::Value(_) => {
             // Values don't contribute columns
         }
+        FilterEntity::Null => {
+            // Null doesn't contribute columns
+        }
     }
 }
 
@@ -195,6 +198,7 @@ fn evaluate_filter(filter: &FilterEntity, fields: &HashMap<String, DBValue>) -> 
         }
         FilterEntity::Value(_) => false, // A standalone value doesn't make sense as a boolean filter
         FilterEntity::Column(_) => false, // A standalone column reference doesn't make sense as a boolean filter
+        FilterEntity::Null => false,
     }
 }
 
@@ -202,7 +206,7 @@ fn evaluate_filter(filter: &FilterEntity, fields: &HashMap<String, DBValue>) -> 
 fn evaluate_to_value(filter: &FilterEntity, fields: &HashMap<String, DBValue>) -> Option<DBValue> {
     match filter {
         FilterEntity::Value(val) => Some(val.clone()),
-        FilterEntity::Column(name) => fields.get(name).cloned(),
+        FilterEntity::Column(name) => Some(fields.get(name).cloned().unwrap_or(DBValue::Null)),
         _ => None, // Other filter types don't directly evaluate to values
     }
 }
@@ -213,6 +217,9 @@ fn values_equal(left: &DBValue, right: &DBValue) -> bool {
         (DBValue::String(l), DBValue::String(r)) => l == r,
         (DBValue::Number(l), DBValue::Number(r)) => l == r,
         (DBValue::Timestamp(l), DBValue::Timestamp(r)) => l == r,
+        (DBValue::Null, DBValue::Null) => true,
+        (DBValue::Null, _) => false,
+        (_, DBValue::Null) => false,
         _ => false, // Different types are not equal
     }
 }
